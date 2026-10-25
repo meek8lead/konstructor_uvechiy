@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>РАЗБОРКА</title>
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0705; font-family: monospace; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1e2a; font-family: monospace; }
     #app { width: 100%; height: 100%; }
     canvas { display: block; }
     #vignette {
@@ -22,7 +22,7 @@
       position: fixed; inset: 0; display: flex;
       align-items: center; justify-content: center;
       flex-direction: column; color: #eee; z-index: 100;
-      background: radial-gradient(circle, #1a1410 0%, #0a0705 100%);
+      background: radial-gradient(circle, #2a3040 0%, #0a0705 100%);
     }
     .spinner {
       width: 60px; height: 60px; border: 4px solid #333;
@@ -45,19 +45,59 @@
       max-height: 55vh; overflow: auto; color: #faa;
       font-size: 12px; border-left: 3px solid #f33;
     }
-    #error .hint { color: #aaa; margin-top: 16px; font-size: 12px; }
-    #error .hint ul { margin: 8px 0; padding-left: 20px; }
     #error button {
       margin-top: 16px; padding: 10px 24px; font: 14px monospace;
       background: #f33; color: #fff; border: none; cursor: pointer;
     }
-    #error button:hover { background: #f55; }
+
+    /* ── ПРИЦЕЛ ── */
+    #crosshair {
+      position: fixed; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 28px; height: 28px;
+      pointer-events: none; z-index: 30;
+      transition: transform 80ms;
+    }
+    #crosshair .ch-dot {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 5px; height: 5px; border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 0 4px rgba(0,0,0,0.9);
+      transition: background 100ms;
+    }
+    #crosshair .ch-line {
+      position: absolute; background: #ffffff;
+      box-shadow: 0 0 2px rgba(0,0,0,0.9);
+      transition: background 100ms;
+    }
+    #crosshair .ch-top    { left: 50%; top: 0;     width: 2px; height: 7px; transform: translateX(-50%); }
+    #crosshair .ch-bottom { left: 50%; bottom: 0;  width: 2px; height: 7px; transform: translateX(-50%); }
+    #crosshair .ch-left   { top: 50%;  left: 0;    height: 2px; width: 7px; transform: translateY(-50%); }
+    #crosshair .ch-right  { top: 50%;  right: 0;   height: 2px; width: 7px; transform: translateY(-50%); }
+
+    #crosshair.target .ch-dot,
+    #crosshair.target .ch-line { background: #ff4040; }
+    #crosshair.grab .ch-dot,
+    #crosshair.grab .ch-line { background: #ffcc00; }
+    #crosshair.rip .ch-dot,
+    #crosshair.rip .ch-line { background: #ff00ff; }
+    #crosshair.target { transform: translate(-50%, -50%) scale(1.15); }
+    #crosshair.grab { transform: translate(-50%, -50%) scale(1.25); }
   </style>
 </head>
 <body>
   <div id="app"></div>
   <div id="vignette"></div>
   <div id="flash"></div>
+
+  <div id="crosshair" style="display:none">
+    <div class="ch-dot"></div>
+    <div class="ch-line ch-top"></div>
+    <div class="ch-line ch-bottom"></div>
+    <div class="ch-line ch-left"></div>
+    <div class="ch-line ch-right"></div>
+  </div>
 
   <div id="loading">
     <div class="title">РАЗБОРКА</div>
@@ -68,16 +108,6 @@
   <div id="error">
     <h2 id="error-title">Ошибка</h2>
     <pre id="error-details"></pre>
-    <div class="hint">
-      <b>Что можно попробовать:</b>
-      <ul>
-        <li>Обнови страницу (Ctrl+F5 / Cmd+Shift+R)</li>
-        <li>Проверь интернет</li>
-        <li>Открой в Chrome / Firefox / Edge последней версии</li>
-        <li>Отключи блокировщики рекламы / VPN (могут резать CDN)</li>
-      </ul>
-      Полный лог также в консоли (F12) — ищите <code>[RAZBORKA]</code>.
-    </div>
     <button onclick="location.reload()">Перезагрузить</button>
   </div>
 
@@ -97,33 +127,16 @@
       const e = document.getElementById('error');
       if (e) e.style.display = 'block';
       document.getElementById('error-title').textContent = title;
-      const d = document.getElementById('error-details');
       const msg = err ? (err.stack || err.message || String(err)) : '(нет сообщения)';
-      d.textContent = msg + '\n\n──────── Логи загрузки ────────\n' +
-        (loadLogs.length ? loadLogs.join('\n') : '(пусто)');
+      document.getElementById('error-details').textContent =
+        msg + '\n\n──────── Логи ────────\n' + (loadLogs.join('\n') || '(пусто)');
     }
-    window.__showError = showError;
-    window.__log = log;
+    window.__app_ready = false;
 
-    window.addEventListener('error', e => {
-      if (!window.__app_ready && e.message) showError('JS ошибка', e.error || e.message);
-    });
-    window.addEventListener('unhandledrejection', e => {
-      if (!window.__app_ready) showError('Ошибка загрузки модуля', e.reason);
-    });
-    setTimeout(() => {
-      if (!window.__app_ready) {
-        showError('Таймаут 60 секунд', new Error(
-          'Загрузка не завершилась. Скорее всего браузер не может достучаться до CDN.\n' +
-          'Проверь вкладку Network в DevTools (F12).'));
-      }
-    }, 60000);
-
-    /* ═════════ ДИНАМ. ЗАГРУЗКА ═════════ */
     async function withTimeout(promise, ms, label) {
       let timer;
       const timeout = new Promise((_, rej) => {
-        timer = setTimeout(() => rej(new Error('timeout: ' + label + ' (' + ms + 'ms)')), ms);
+        timer = setTimeout(() => rej(new Error('timeout: ' + label)), ms);
       });
       try { return await Promise.race([promise, timeout]); }
       finally { clearTimeout(timer); }
@@ -137,16 +150,13 @@
       ];
       for (const url of urls) {
         try {
-          const host = new URL(url).hostname;
-          log('three: загружаю с ' + host + '...');
-          const m = await withTimeout(import(/* @vite-ignore */ url), 12000, 'three с ' + host);
-          log('three: OK (' + host + ')');
+          log('three: ' + new URL(url).hostname + '...');
+          const m = await withTimeout(import(url), 12000, 'three');
+          log('three: OK');
           return m;
-        } catch (e) {
-          log('three: fail → ' + (e.message || e));
-        }
+        } catch (e) { log('three: fail → ' + e.message); }
       }
-      throw new Error('Three.js не загрузился ни с одного CDN');
+      throw new Error('Three.js не загрузился');
     }
 
     async function loadRapier() {
@@ -157,54 +167,68 @@
       ];
       for (const url of urls) {
         try {
-          const host = new URL(url).hostname;
-          log('rapier: загружаю с ' + host + '...');
-          const m = await withTimeout(import(/* @vite-ignore */ url), 20000, 'rapier с ' + host);
+          log('rapier: ' + new URL(url).hostname + '...');
+          const m = await withTimeout(import(url), 20000, 'rapier');
           const R = m.default || m;
-          if (typeof R.init !== 'function') throw new Error('нет RAPIER.init');
-          log('rapier: инициализирую WASM...');
+          if (typeof R.init !== 'function') throw new Error('нет init');
           await withTimeout(R.init(), 20000, 'RAPIER.init');
-          log('rapier: OK (' + host + ')');
+          log('rapier: OK');
           return R;
-        } catch (e) {
-          log('rapier: fail → ' + (e.message || e));
-        }
+        } catch (e) { log('rapier: fail → ' + e.message); }
       }
-      throw new Error('Rapier не загрузился ни с одного CDN');
+      throw new Error('Rapier не загрузился');
     }
 
     /* ═════════ ИГРА ═════════ */
     function startGame(THREE, RAPIER) {
       const K = {
+        // РОБОТ
         ROBOT_MASS: 400, ROBOT_RADIUS: 0.55, ROBOT_HALF_HEIGHT: 0.9,
         ROBOT_SPEED: 6, ROBOT_JUMP: 5,
         ROBOT_DASH_IMPULSE: 2400, ROBOT_DASH_COOLDOWN: 0.9,
         ROBOT_HP_MAX: 100, ROBOT_REPAIR_PCT: 0.25,
+        ROBOT_SCALE: 0.85,
 
-        HUMAN_MOTOR_STIFFNESS: 300, HUMAN_MOTOR_DAMPING: 30,
-        HUMAN_WALK_PHASE_SPEED: 5.0,
-        HUMAN_HIP_AMP: 0.30, HUMAN_KNEE_AMP: 0.5,
-        HUMAN_WALK_IMPULSE_K: 4,
-        HUMAN_UPRIGHT_K: 40, HUMAN_UPRIGHT_D: 8,
+        // ЧЕЛОВЕК
+        HUMAN_SCALE: 1.15,
+        HUMAN_MOTOR_STIFFNESS: 400,
+        HUMAN_MOTOR_DAMPING: 40,
+        HUMAN_WALK_PHASE_SPEED: 6.0,
+        HUMAN_WALK_IMPULSE_K: 15,
+        HUMAN_UPRIGHT_K: 80,
+        HUMAN_UPRIGHT_D: 15,
+        HUMAN_SETTLE_TIME: 1.0,
 
+        // РИП
         RIP_FORCE_BASE: 9000, RIP_EFF_MIN: 0.4,
         GRAB_RADIUS: 4.0, SHOCK_JOINT_MULT: 0.7,
         DEATH_LIMB_THRESHOLD: 3, DEATH_BLEEDOUT_TIME: 5.0,
 
-        THROW_LIMB_IMPULSE: 3500, THROW_BODY_IMPULSE: 1800, THROW_WEAPON_IMPULSE: 1500,
+        // МЕТАНИЕ
+        THROW_LIMB_IMPULSE: 3500,
+        THROW_BODY_IMPULSE: 2600,
+        THROW_WEAPON_IMPULSE: 1500,
 
-        AI_SPEED_BASE: 1.6, AI_WIND_UP_SEC: 0.18,
+        // ИИ
+        AI_SPEED_BASE: 1.8, AI_WIND_UP_SEC: 0.18,
+        AI_UNARMED_DAMAGE: 4,
         MORALE_DROP_PER_KILL: 20, MORALE_FLEE_THRESHOLD: 30, MORALE_RADIUS: 8,
 
+        // АРЕНА
         ARENA_RADIUS: 10, ARENA_WALL_HEIGHT: 2, ARENA_WALL_SEGMENTS: 20,
 
+        // ФИЗИКА
         FIXED_DT: 1/60, GRAVITY: -20, MAX_SUBSTEPS: 5,
 
-        CAM_MIN_DIST: 3, CAM_MAX_DIST: 10, CAM_DEFAULT_DIST: 5.5,
-        CAM_MIN_PITCH: 0.2, CAM_MAX_PITCH: 0.9,
+        // КАМЕРА
+        CAM_MIN_DIST: 2.5, CAM_MAX_DIST: 9, CAM_DEFAULT_DIST: 4.5,
+        CAM_MIN_PITCH: 0.15, CAM_MAX_PITCH: 0.75,
         CAM_YAW_SENS: 0.0035, CAM_PITCH_SENS: 0.0030,
-        CAM_TARGET_HEIGHT: 1.4, CAM_SMOOTH: 8,
+        CAM_TARGET_HEIGHT: 1.4, CAM_SMOOTH: 10,
+        CAM_FOV: 75,
+        CAM_SHOULDER_OFFSET: 0.8,
 
+        // ВОЛНЫ
         WAVE_PAUSE_SEC: 5.0,
       };
 
@@ -225,13 +249,13 @@
       const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 
       const MAT = {
-        steel: new THREE.MeshStandardMaterial({ color: 0x5b6470, roughness: 0.55, metalness: 0.85 }),
-        steelDark: new THREE.MeshStandardMaterial({ color: 0x2b3138, roughness: 0.7, metalness: 0.6 }),
-        skin: new THREE.MeshStandardMaterial({ color: 0xd8a888, roughness: 0.75 }),
-        clothRed: new THREE.MeshStandardMaterial({ color: 0x8a2020, roughness: 0.95 }),
-        clothBlue: new THREE.MeshStandardMaterial({ color: 0x204a8a, roughness: 0.95 }),
-        clothGreen: new THREE.MeshStandardMaterial({ color: 0x207a30, roughness: 0.95 }),
-        clothBrown: new THREE.MeshStandardMaterial({ color: 0x5a4020, roughness: 0.95 }),
+        steel: new THREE.MeshStandardMaterial({ color: 0x8a95a5, roughness: 0.45, metalness: 0.85 }),
+        steelDark: new THREE.MeshStandardMaterial({ color: 0x454a55, roughness: 0.6, metalness: 0.7 }),
+        skin: new THREE.MeshStandardMaterial({ color: 0xe8b890, roughness: 0.7 }),
+        clothRed: new THREE.MeshStandardMaterial({ color: 0xb02020, roughness: 0.85 }),
+        clothBlue: new THREE.MeshStandardMaterial({ color: 0x2a5aa8, roughness: 0.85 }),
+        clothGreen: new THREE.MeshStandardMaterial({ color: 0x2a8a40, roughness: 0.85 }),
+        clothBrown: new THREE.MeshStandardMaterial({ color: 0x7a5a28, roughness: 0.85 }),
       };
       const CLOTH_POOL = [MAT.clothRed, MAT.clothBlue, MAT.clothGreen, MAT.clothBrown];
 
@@ -265,13 +289,14 @@
         forearmL:'elbowL', forearmR:'elbowR', thighL:'hipL', thighR:'hipR', shinL:'kneeL', shinR:'kneeR' };
       const DETACHABLE = ['head','upperArmL','upperArmR','forearmL','forearmR','thighL','thighR','shinL','shinR'];
 
-      function buildLimbMesh(def, material) {
+      function buildLimbMesh(def, material, scale) {
         let geo;
         if (def.shape === 'capsule') geo = new THREE.CapsuleGeometry(def.radius, def.halfHeight, 4, 10);
         else if (def.shape === 'sphere') geo = new THREE.IcosahedronGeometry(def.radius, 1);
         else { const [hx,hy,hz] = def.halfExtents; geo = new THREE.BoxGeometry(hx*2, hy*2, hz*2); }
         const mesh = new THREE.Mesh(geo, material);
         mesh.castShadow = true; mesh.receiveShadow = true;
+        mesh.scale.setScalar(scale);
         if (def.id === 'head' && def.radius) {
           const eyeMat = new THREE.MeshBasicMaterial({ color: 0x101010 });
           for (const sx of [-1, 1]) {
@@ -308,10 +333,11 @@
               state: opts.aiState ?? 'idle', stateTimer: 0,
               targetPos: opts.targetPos?.clone() ?? null,
               walkPhase: Math.random() * Math.PI * 2,
-              moveSpeed: K.AI_SPEED_BASE + Math.random() * 0.4,
+              moveSpeed: K.AI_SPEED_BASE + Math.random() * 0.3,
               painTolerance: 0.6 + Math.random() * 0.8,
               attackCooldown: 0, hasWeapon: false,
               role: Math.random() < 0.6 ? 'front' : 'flank',
+              settleTimer: K.HUMAN_SETTLE_TIME,
             },
             morale: 100, blood: 100, alive: true, xEyesAdded: false,
           };
@@ -322,13 +348,13 @@
               RAPIER.RigidBodyDesc.dynamic()
                 .setTranslation(worldPos.x, worldPos.y, worldPos.z)
                 .setRotation({ x: yawQ.x, y: yawQ.y, z: yawQ.z, w: yawQ.w })
-                .setLinearDamping(0.05).setAngularDamping(0.5)
+                .setLinearDamping(0.1).setAngularDamping(0.5)
                 .setCcdEnabled(def.id === 'head')
             );
             const cDesc = this.makeCollider(def).setCollisionGroups(group);
             const collider = this.engine.world.createCollider(cDesc, rb);
             const material = def.material === 'skin' ? MAT.skin : cloth;
-            const mesh = buildLimbMesh(def, material);
+            const mesh = buildLimbMesh(def, material, K.HUMAN_SCALE);
             mesh.position.copy(worldPos); mesh.quaternion.copy(yawQ);
             this.engine.scene.add(mesh);
             body.limbs.set(def.id, { id: def.id, body: rb, collider, mesh, detached: false });
@@ -391,12 +417,12 @@
 
       /* ───── ОРУЖИЕ ───── */
       const WEAPONS = {
-        bat:     { kind:'bat',     damage:12, mass:1.2, reach:1.1, cooldown:1.1, canDisarm:true, length:0.75, thickness:0.06, color:0x6a4520, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
-        pipe:    { kind:'pipe',    damage:15, mass:2.0, reach:1.3, cooldown:1.3, canDisarm:true, length:0.9,  thickness:0.05, color:0x555a60, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
-        axe:     { kind:'axe',     damage:22, mass:2.5, reach:1.0, cooldown:1.6, canDisarm:true, length:0.7,  thickness:0.08, color:0x3a2a1a, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
-        sword:   { kind:'sword',   damage:25, mass:2.0, reach:1.2, cooldown:1.2, canDisarm:false,length:0.95, thickness:0.04, color:0xc0c8d0, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
-        pistol:  { kind:'pistol',  damage:8,  mass:1.0, reach:30,  cooldown:1.5, canDisarm:true, length:0.25, thickness:0.05, color:0x222228, attachmentLocal:[0,-0.13,0], gripLocal:[0,0,0] },
-        shotgun: { kind:'shotgun', damage:30, mass:3.0, reach:8,   cooldown:2.2, canDisarm:true, length:0.85, thickness:0.07, color:0x4a2010, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
+        bat:    { kind:'bat',    damage:12, mass:1.2, reach:1.2, cooldown:1.1, canDisarm:true, length:0.75, thickness:0.06, color:0x8a5530, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
+        pipe:   { kind:'pipe',   damage:15, mass:2.0, reach:1.4, cooldown:1.3, canDisarm:true, length:0.9,  thickness:0.05, color:0x6a7080, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
+        axe:    { kind:'axe',    damage:22, mass:2.5, reach:1.1, cooldown:1.6, canDisarm:true, length:0.7,  thickness:0.08, color:0x6a4520, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
+        sword:  { kind:'sword',  damage:25, mass:2.0, reach:1.3, cooldown:1.2, canDisarm:false,length:0.95, thickness:0.04, color:0xd0d8e0, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
+        pistol: { kind:'pistol', damage:8,  mass:1.0, reach:30,  cooldown:1.5, canDisarm:true, length:0.25, thickness:0.05, color:0x333338, attachmentLocal:[0,-0.13,0], gripLocal:[0,0,0] },
+        shotgun:{ kind:'shotgun',damage:30, mass:3.0, reach:8,   cooldown:2.2, canDisarm:true, length:0.85, thickness:0.07, color:0x6a4020, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
       };
       let nextWeaponId = 1;
       const WPN_FWD = new THREE.Vector3(0, 0, -1);
@@ -428,7 +454,7 @@
               .setMass(def.mass).setFriction(0.6).setRestitution(0.15), rb
           );
           const geo = new THREE.BoxGeometry(def.thickness*2, def.thickness*2, def.length);
-          const mat = new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.7, metalness: def.kind === 'sword' ? 0.9 : 0.4 });
+          const mat = new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.6, metalness: def.kind === 'sword' ? 0.9 : 0.4 });
           const mesh = new THREE.Mesh(geo, mat);
           mesh.castShadow = true; mesh.receiveShadow = true;
           mesh.position.copy(worldPos); mesh.quaternion.copy(q);
@@ -479,7 +505,7 @@
         }
         tryPickupForRobot() {
           const handPos = this.robot.getRightHandPos();
-          let best = null, bestD = 2.4;
+          let best = null, bestD = 2.8;
           for (const inst of this.instances) {
             if (inst.holder) continue;
             const t = inst.body.translation();
@@ -495,7 +521,7 @@
           if (!torso) return false;
           const t = torso.body.translation();
           const pos = new THREE.Vector3(t.x, t.y, t.z);
-          let best = null, bestD = 1.2;
+          let best = null, bestD = 1.5;
           for (const inst of this.instances) {
             if (inst.holder) continue;
             const wt = inst.body.translation();
@@ -522,7 +548,10 @@
           return false;
         }
         drop(inst) {
-          if (inst.joint) { this.engine.world.removeImpulseJoint(inst.joint, true); inst.joint = null; }
+          if (inst.joint) {
+            try { this.engine.world.removeImpulseJoint(inst.joint, true); } catch (e) {}
+            inst.joint = null;
+          }
           if (inst.holder?.type === 'human') {
             const limb = inst.holder.human.limbs.get(inst.holder.forearm);
             if (limb) limb.attachedWeapon = null;
@@ -542,7 +571,10 @@
           this.robot.setHeldWeapon(null);
         }
         throwWeapon(inst, dir, impulse) {
-          if (inst.joint) { this.engine.world.removeImpulseJoint(inst.joint, true); inst.joint = null; }
+          if (inst.joint) {
+            try { this.engine.world.removeImpulseJoint(inst.joint, true); } catch (e) {}
+            inst.joint = null;
+          }
           inst.holder = null;
           inst.body.applyImpulse({ x: dir.x*impulse, y: dir.y*impulse+200, z: dir.z*impulse }, true);
         }
@@ -587,7 +619,7 @@
           }
           if (!inst.bloodied) {
             inst.bloodied = true;
-            inst.mesh.material.color.setHex(0x5a1a1a);
+            inst.mesh.material.color.setHex(0x6a1a1a);
           }
           this.audio.play('weapon_hit', { pos: hitPoint, pitch: 0.9 + Math.random() * 0.2 });
           this.blood.burst(hitPoint, dir, 15);
@@ -680,7 +712,7 @@
             };
             addEventListener('click', resume);
             addEventListener('keydown', resume);
-          } catch (e) { console.warn('[audio] init failed:', e); this.enabled = false; }
+          } catch (e) { this.enabled = false; }
         }
         async tryLoadFile(name) {
           try {
@@ -740,7 +772,6 @@
           osc.connect(gain).connect(ctx.destination);
           osc.start(t); osc.stop(t + dur + 0.01);
         }
-        updateListener(camera) { this.camera = camera; }
       }
 
       /* ───── BLOOD ───── */
@@ -755,13 +786,16 @@
           for (let i = 0; i < MAX_PARTICLES; i++) this.positions[i * 3 + 1] = -1000;
           const geo = new THREE.BufferGeometry();
           geo.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
-          const mat = new THREE.PointsMaterial({ color: 0x8b0a0a, size: 0.06, sizeAttenuation: true, transparent: true, opacity: 0.95, depthWrite: false });
+          const mat = new THREE.PointsMaterial({
+            color: 0xcc1a1a, size: 0.08, sizeAttenuation: true,
+            transparent: true, opacity: 1.0, depthWrite: false,
+          });
           this.points = new THREE.Points(geo, mat);
           this.points.frustumCulled = false;
           scene.add(this.points);
         }
         addEmitter(pos, dir, rate = 90, ttl = 6) {
-          const e = { pos: pos.clone(), dir: dir.clone().normalize(), rate, accum: 0, ttl, speed: 2.2 + Math.random() * 0.8 };
+          const e = { pos: pos.clone(), dir: dir.clone().normalize(), rate, accum: 0, ttl, speed: 2.5 + Math.random() };
           this.emitters.push(e);
           return e;
         }
@@ -824,7 +858,7 @@
       class RobotController {
         constructor(engine) {
           this.engine = engine;
-          this.yaw = 0; this.pitch = 0.55;
+          this.yaw = 0; this.pitch = 0.35;
           this.camDist = K.CAM_DEFAULT_DIST;
           this.camTarget = new THREE.Vector3();
           this.keys = new Set();
@@ -838,6 +872,7 @@
           this.handVisual = null;
           this.handLine = null;
           this.ripHold = false;
+          this.crosshair = document.getElementById('crosshair');
           this.createBody();
           this.createVisual();
           this.bindInput();
@@ -858,7 +893,7 @@
             RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 3, 0)
           );
           const handCol = this.engine.world.createCollider(
-            RAPIER.ColliderDesc.ball(0.12).setCollisionGroups(0), this.rightHand
+            RAPIER.ColliderDesc.ball(0.15).setCollisionGroups(0), this.rightHand
           );
           this.rightHandColliderHandle = handCol.handle;
         }
@@ -873,13 +908,13 @@
           const head = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.45, 0.55), MAT.steel);
           head.position.y = K.ROBOT_HALF_HEIGHT + 0.35;
           head.castShadow = true; this.root.add(head);
-          const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff2020 });
+          const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff3030 });
           for (const sx of [-1, 1]) {
-            const eye = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.04), eyeMat);
+            const eye = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.09, 0.04), eyeMat);
             eye.position.set(sx * 0.13, K.ROBOT_HALF_HEIGHT + 0.37, 0.28);
             this.root.add(eye);
           }
-          // левая рука — статичная
+          // левая рука
           const shL = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), MAT.steelDark);
           shL.position.set(-(K.ROBOT_RADIUS + 0.1), 0.45, 0);
           shL.castShadow = true; this.root.add(shL);
@@ -889,18 +924,19 @@
           const handL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), MAT.steelDark);
           handL.position.set(-(K.ROBOT_RADIUS + 0.1), -0.38, 0);
           handL.castShadow = true; this.root.add(handL);
-          // правое плечо — статика (основание манипулятора)
+          // правое плечо
           const shR = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), MAT.steelDark);
           shR.position.set(K.ROBOT_RADIUS + 0.1, 0.45, 0);
           shR.castShadow = true; this.root.add(shR);
-          // визуальная кисть манипулятора
+          // кисть-манипулятор
           this.handVisual = new THREE.Mesh(
-            new THREE.BoxGeometry(0.26, 0.26, 0.26),
-            new THREE.MeshStandardMaterial({ color: 0xa0a8b0, emissive: 0x441111, metalness: 0.8, roughness: 0.3 })
+            new THREE.BoxGeometry(0.28, 0.28, 0.28),
+            new THREE.MeshStandardMaterial({ color: 0xd0d8e0, emissive: 0x661818, emissiveIntensity: 0.6, metalness: 0.85, roughness: 0.25 })
           );
           this.handVisual.castShadow = true;
           this.engine.scene.add(this.handVisual);
-          this.handLine = null;
+
+          this.root.scale.setScalar(K.ROBOT_SCALE);
           this.engine.scene.add(this.root);
         }
         bindInput() {
@@ -922,7 +958,9 @@
           });
           addEventListener('mousedown', e => {
             if (document.pointerLockElement !== this.engine.renderer.domElement) {
-              this.engine.renderer.domElement.requestPointerLock(); return;
+              this.engine.renderer.domElement.requestPointerLock();
+              if (this.crosshair) this.crosshair.style.display = 'block';
+              return;
             }
             if (e.button === 0) eventBus.emit('robot:grabDown');
             if (e.button === 2) { this.ripHold = true; eventBus.emit('robot:ripDown'); }
@@ -933,7 +971,7 @@
           });
           addEventListener('contextmenu', e => e.preventDefault());
           addEventListener('wheel', e => {
-            this.camDist = clamp(this.camDist + Math.sign(e.deltaY) * 0.6, K.CAM_MIN_DIST, K.CAM_MAX_DIST);
+            this.camDist = clamp(this.camDist + Math.sign(e.deltaY) * 0.5, K.CAM_MIN_DIST, K.CAM_MAX_DIST);
           }, { passive: true });
         }
         fixedUpdate(dt) {
@@ -948,7 +986,7 @@
           const vel = this.body.linvel();
           const tv = dir.lengthSq() > 0 ? dir.normalize().multiplyScalar(K.ROBOT_SPEED) : new THREE.Vector3();
           this.body.applyImpulse({
-            x: (tv.x - vel.x) * K.ROBOT_MASS * 4 * dt, y: 0, z: (tv.z - vel.z) * K.ROBOT_MASS * 4 * dt,
+            x: (tv.x - vel.x) * K.ROBOT_MASS * 5 * dt, y: 0, z: (tv.z - vel.z) * K.ROBOT_MASS * 5 * dt,
           }, true);
           if (this.keys.has('Space') && this.isGrounded()) {
             this.body.applyImpulse({ x: 0, y: K.ROBOT_MASS * K.ROBOT_JUMP, z: 0 }, true);
@@ -958,11 +996,12 @@
             this.body.applyImpulse({ x: d.x, y: 0, z: d.z }, true);
             this.dashTimer = K.ROBOT_DASH_COOLDOWN;
           }
+          // позиция манипулятора
           const t = this.body.translation();
           const camDir = new THREE.Vector3();
           this.engine.camera.getWorldDirection(camDir);
-          const tp = new THREE.Vector3(t.x, t.y, t.z);
-          const target = tp.clone().add(new THREE.Vector3(0, 0.4, 0)).add(camDir.clone().multiplyScalar(1.4));
+          const tp = new THREE.Vector3(t.x, t.y + 0.4, t.z);
+          const target = tp.clone().add(camDir.clone().multiplyScalar(2.0));
           this.handTargetPos.copy(target);
           this.rightHand.setNextKinematicTranslation({ x: target.x, y: target.y, z: target.z });
         }
@@ -976,34 +1015,66 @@
           const t = this.body.translation();
           this.root.position.set(t.x, t.y, t.z);
           this.root.rotation.y = this.yaw;
-          const tp = new THREE.Vector3(t.x, t.y + K.CAM_TARGET_HEIGHT, t.z);
-          this.camTarget.lerp(tp, 1 - Math.exp(-K.CAM_SMOOTH * dt));
-          const r = this.camDist * Math.cos(this.pitch);
-          const y = this.camDist * Math.sin(this.pitch);
-          this.engine.camera.position.set(
-            this.camTarget.x + Math.sin(this.yaw) * r,
-            this.camTarget.y + y,
-            this.camTarget.z + Math.cos(this.yaw) * r
-          );
-          this.engine.camera.lookAt(this.camTarget);
 
-          // визуальный манипулятор
+          // камера с плечевым смещением
+          const rightVec = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+          const backVec = new THREE.Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+
+          const camTargetPos = new THREE.Vector3(t.x, t.y + K.CAM_TARGET_HEIGHT, t.z);
+          this.camTarget.lerp(camTargetPos, 1 - Math.exp(-K.CAM_SMOOTH * dt));
+
+          const horDist = this.camDist * Math.cos(this.pitch);
+          const vertDist = this.camDist * Math.sin(this.pitch);
+
+          const camPos = this.camTarget.clone()
+            .add(backVec.clone().multiplyScalar(horDist))
+            .add(rightVec.clone().multiplyScalar(K.CAM_SHOULDER_OFFSET));
+          camPos.y += vertDist;
+
+          const lookAt = this.camTarget.clone()
+            .add(rightVec.clone().multiplyScalar(K.CAM_SHOULDER_OFFSET));
+
+          this.engine.camera.position.copy(camPos);
+          this.engine.camera.lookAt(lookAt);
+
+          // манипулятор
           if (this.handVisual) {
             this.handVisual.position.copy(this.handTargetPos);
             const shoulderLocal = new THREE.Vector3(K.ROBOT_RADIUS + 0.1, 0.45, 0);
             const shoulderWorld = shoulderLocal.clone()
               .applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw)
+              .multiplyScalar(K.ROBOT_SCALE)
               .add(new THREE.Vector3(t.x, t.y, t.z));
             if (!this.handLine) {
               const geo = new THREE.BufferGeometry();
               geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
-              this.handLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xff4444 }));
+              this.handLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xff5050, transparent: true, opacity: 0.7 }));
               this.engine.scene.add(this.handLine);
             }
             const arr = this.handLine.geometry.attributes.position.array;
             arr[0] = shoulderWorld.x; arr[1] = shoulderWorld.y; arr[2] = shoulderWorld.z;
             arr[3] = this.handTargetPos.x; arr[4] = this.handTargetPos.y; arr[5] = this.handTargetPos.z;
             this.handLine.geometry.attributes.position.needsUpdate = true;
+          }
+
+          this.updateCrosshair();
+        }
+        updateCrosshair() {
+          if (!this.crosshair) return;
+          this.crosshair.classList.remove('target', 'grab', 'rip');
+          if (this.ripHold) { this.crosshair.classList.add('rip'); return; }
+          // raycast на NPC
+          const origin = this.engine.camera.position;
+          const dir = new THREE.Vector3();
+          this.engine.camera.getWorldDirection(dir);
+          const ray = new RAPIER.Ray({ x: origin.x, y: origin.y, z: origin.z }, { x: dir.x, y: dir.y, z: dir.z });
+          const bodyH = this.bodyColliderHandle, handH = this.rightHandColliderHandle;
+          const hit = this.engine.world.castRay(ray, 60, true,
+            undefined, undefined, undefined, undefined,
+            (c) => c.handle !== bodyH && c.handle !== handH
+          );
+          if (hit && colliderRegistry.has(hit.collider.handle)) {
+            this.crosshair.classList.add('target');
           }
         }
         getPosition() { const t = this.body.translation(); return new THREE.Vector3(t.x, t.y, t.z); }
@@ -1018,7 +1089,7 @@
         setHeldWeapon(w) { this.heldWeapon = w; }
         damage(a) {
           this.hp = Math.max(0, this.hp - a);
-          this.engine.addShake(0.05, 0.15);
+          this.engine.addShake(0.06, 0.15);
           eventBus.emit('robot:damaged', a);
           if (this.hp <= 0) eventBus.emit('robot:dead');
         }
@@ -1038,28 +1109,21 @@
           const origin = cam.position;
           const dir = this._v.set(0, 0, -1).applyQuaternion(cam.quaternion);
           const ray = new RAPIER.Ray({ x: origin.x, y: origin.y, z: origin.z }, { x: dir.x, y: dir.y, z: dir.z });
-          const bodyHandle = this.robot.getBodyColliderHandle();
-          const handHandle = this.robot.getRightHandColliderHandle();
+          const bodyH = this.robot.getBodyColliderHandle();
+          const handH = this.robot.getRightHandColliderHandle();
           const hit = this.robot.getWorld().castRay(
             ray, 60, true,
             undefined, undefined, undefined, undefined,
-            (collider) => {
-              const h = collider.handle;
-              return h !== bodyHandle && h !== handHandle;
-            }
+            (c) => c.handle !== bodyH && c.handle !== handH
           );
-          if (!hit) { console.log('[grab] промах: луч не попал'); return false; }
+          if (!hit) return false;
           const ref = colliderRegistry.get(hit.collider.handle);
-          if (!ref) { console.log('[grab] попал не в человека'); return false; }
+          if (!ref) return false;
           const limb = ref.human.limbs.get(ref.segmentId);
           if (!limb) return false;
           const handPos = this.robot.getRightHandPos();
           const t = limb.body.translation();
-          const dist = handPos.distanceTo(new THREE.Vector3(t.x, t.y, t.z));
-          if (dist > K.GRAB_RADIUS) {
-            console.log('[grab] слишком далеко:', dist.toFixed(2));
-            return false;
-          }
+          if (handPos.distanceTo(new THREE.Vector3(t.x, t.y, t.z)) > K.GRAB_RADIUS) return false;
           const hitWorld = new THREE.Vector3(
             origin.x + dir.x * hit.timeOfImpact,
             origin.y + dir.y * hit.timeOfImpact,
@@ -1076,7 +1140,7 @@
         }
         release() {
           if (!this.grab) return;
-          this.robot.getWorld().removeImpulseJoint(this.grab.joint, true);
+          try { this.robot.getWorld().removeImpulseJoint(this.grab.joint, true); } catch (e) {}
           if (this.grab.human.alive && !this.grab.limb.detached) this.grab.human.ai.state = 'approach';
           this.grab = null;
         }
@@ -1145,7 +1209,7 @@
           g.limb.mesh.position.y += this._tmp.y * s;
           g.limb.mesh.position.z += this._tmp.z * s;
           if (p > 0.7) {
-            const j2 = (p - 0.7) * 0.04;
+            const j2 = (p - 0.7) * 0.05;
             g.limb.mesh.position.x += (Math.random() - 0.5) * j2;
             g.limb.mesh.position.y += (Math.random() - 0.5) * j2;
           }
@@ -1153,14 +1217,14 @@
         detach(human, segId, jid, joint) {
           if (joint.broken) return;
           joint.broken = true;
-          this.engine.world.removeImpulseJoint(joint.joint, true);
+          try { this.engine.world.removeImpulseJoint(joint.joint, true); } catch (e) {}
           const limb = human.limbs.get(segId);
           limb.detached = true;
           const jd = human.joints.get(jid).def;
           const parent = human.limbs.get(jd.a);
           const stumpLocal = new THREE.Vector3(jd.anchorA[0], jd.anchorA[1], jd.anchorA[2]);
-          const stumpMat = new THREE.MeshStandardMaterial({ color: 0x6a0a0a, roughness: 0.9 });
-          const stump = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 8), stumpMat);
+          const stumpMat = new THREE.MeshStandardMaterial({ color: 0x8a1010, roughness: 0.9 });
+          const stump = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), stumpMat);
           stump.position.copy(stumpLocal);
           parent.mesh.add(stump);
           const pt = parent.body.translation();
@@ -1168,8 +1232,8 @@
           const pq = new THREE.Quaternion(pr.x, pr.y, pr.z, pr.w);
           const stumpWorld = stumpLocal.clone().applyQuaternion(pq).add(new THREE.Vector3(pt.x, pt.y, pt.z));
           const dirDown = new THREE.Vector3(0, -1, 0);
-          this.blood.addEmitter(stumpWorld, dirDown, 70, 6);
-          this.blood.burst(stumpWorld, dirDown, 40);
+          this.blood.addEmitter(stumpWorld, dirDown, 80, 6);
+          this.blood.burst(stumpWorld, dirDown, 60);
           this.audio.play('squelch_big', { pos: stumpWorld, volume: 1, pitch: 0.9 + Math.random() * 0.2 });
           this.audio.play('bone_snap', { pos: stumpWorld, volume: 0.6 });
           if (human.alive) this.audio.play('scream_rip', { pos: stumpWorld, volume: 0.9 });
@@ -1220,8 +1284,6 @@
             if (pa.delay <= 0 && !pa.invoked) {
               pa.invoked = true;
               if (pa.human.alive && pa.human.ai.state !== 'grabbed' && pa.human.ai.state !== 'dead') {
-                const sh = pa.human.limbs.get('upperArmR');
-                if (sh && !sh.detached) sh.body.applyImpulse({ x: 0, y: -50, z: -50 }, true);
                 this.weaponSys.performStrike(pa.human);
               }
               this.pendingAttacks.splice(i, 1);
@@ -1260,6 +1322,12 @@
           }
         }
         tickHuman(h, dt) {
+          // settle — не атакуем и не идём сразу после спавна
+          if (h.ai.settleTimer > 0) {
+            h.ai.settleTimer -= dt;
+            this.idle(h);
+            return;
+          }
           const skip = !h.alive || h.ai.state === 'grabbed' || h.ai.state === 'shock';
           if (!skip) this.upright(h, dt);
           h.ai.stateTimer -= dt;
@@ -1276,19 +1344,18 @@
             case 'disarmed': return this.doDisarmed(h);
             case 'limbLost': return this.doLimbLost(h);
             case 'flee': return this.driveFlee(h, tp, dt);
-            default: this.idle(h);
+            case 'grabbed':
+            case 'shock':
+            case 'dead':
+              this.idle(h); return;
           }
         }
         doApproach(h, tp, dt) {
-          const tgt = h.ai.targetPos;
-          if (!tgt) return this.idle(h);
-          const to = tgt.clone().sub(tp); to.y = 0;
+          // идём к роботу, не к центру
+          const robotPos = this.robot.getPosition();
+          const to = robotPos.clone().sub(tp); to.y = 0;
           const dist = to.length();
-          if (h.ai.role === 'flank' && dist > 2.5) {
-            const r = new THREE.Vector3(-to.z, 0, to.x).normalize();
-            to.addScaledVector(r, Math.min(dist * 0.5, 2.0));
-          }
-          if (dist < 1.8) { h.ai.state = 'attack'; h.ai.stateTimer = 0; return; }
+          if (dist < 1.9) { h.ai.state = 'attack'; h.ai.stateTimer = 0; return; }
           h.ai.walkPhase += K.HUMAN_WALK_PHASE_SPEED * dt;
           this.walkCycle(h);
           const dir = to.normalize();
@@ -1303,10 +1370,10 @@
           if (h.morale < K.MORALE_FLEE_THRESHOLD) h.ai.state = 'flee';
         }
         doAttack(h, tp) {
-          const tgt = h.ai.targetPos;
-          if (!tgt) return this.idle(h);
-          const to = tgt.clone().sub(tp); to.y = 0;
-          if (to.length() > 2.0) { h.ai.state = 'approach'; return; }
+          const robotPos = this.robot.getPosition();
+          const toRobot = robotPos.clone().sub(tp).setY(0);
+          const distToRobot = toRobot.length();
+          if (distToRobot > 2.2) { h.ai.state = 'approach'; return; }
           if (h.ai.attackCooldown > 0) return this.idle(h);
           if (h.ai.hasWeapon) {
             const sh = h.limbs.get('upperArmR');
@@ -1314,10 +1381,10 @@
             h.ai.attackCooldown = 1.2 + Math.random() * 0.5;
             this.pendingAttacks.push({ human: h, delay: K.AI_WIND_UP_SEC, invoked: false });
           } else {
-            const rp = this.robot.getPosition();
-            const dir = rp.clone().sub(tp).setY(0).normalize();
-            h.limbs.get('torso').body.applyImpulse({ x: dir.x * 80, y: 20, z: dir.z * 80 }, true);
-            h.ai.attackCooldown = 1.4 + Math.random() * 0.5;
+            // кулак — прямой урон
+            this.robot.damage(K.AI_UNARMED_DAMAGE);
+            this.audio.play('punch_metal', { pos: robotPos, volume: 0.7 });
+            h.ai.attackCooldown = 1.3 + Math.random() * 0.5;
           }
         }
         doFlinch(h) {
@@ -1364,22 +1431,17 @@
             if (!hipJ || hipJ.broken || hipJ.def.type !== 'revolute') continue;
             if (!kneeJ || kneeJ.broken || kneeJ.def.type !== 'revolute') continue;
             const ph = phase + l.off;
-            const hipVel = -Math.cos(TAU * ph) * 5;
-            const kneeVel = Math.max(0, -Math.sin(TAU * ph)) * 6;
-            hipJ.joint.configureMotorVelocity(hipVel, K.HUMAN_MOTOR_STIFFNESS, K.HUMAN_MOTOR_DAMPING);
-            kneeJ.joint.configureMotorVelocity(kneeVel, K.HUMAN_MOTOR_STIFFNESS, K.HUMAN_MOTOR_DAMPING);
+            const hipVel = -Math.cos(TAU * ph) * 6;
+            const kneeVel = Math.max(0, -Math.sin(TAU * ph)) * 8;
+            hipJ.joint.configureMotorVelocity(hipVel, K.HUMAN_MOTOR_STIFFNESS);
+            kneeJ.joint.configureMotorVelocity(kneeVel, K.HUMAN_MOTOR_STIFFNESS);
           }
         }
         idle(h) {
           for (const j of h.joints.values()) {
             if (j.def.type !== 'revolute' || j.broken) continue;
-            j.joint.configureMotorPosition(0, 150, 15);
+            j.joint.configureMotorPosition(0, 200, 20);
           }
-        }
-        setMotor(h, id, angle) {
-          const j = h.joints.get(id);
-          if (!j || j.broken || j.def.type !== 'revolute') return;
-          j.joint.configureMotorPosition(angle, K.HUMAN_MOTOR_STIFFNESS, K.HUMAN_MOTOR_DAMPING);
         }
         upright(h, dt) {
           if (!h.alive || h.ai.state === 'grabbed') return;
@@ -1390,9 +1452,9 @@
           const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
           const tilt = new THREE.Vector3().crossVectors(up, new THREE.Vector3(0, 1, 0));
           const av = torso.body.angvel();
-          const tx = clamp(tilt.x * K.HUMAN_UPRIGHT_K - av.x * K.HUMAN_UPRIGHT_D, -200, 200);
-          const ty = clamp(tilt.y * K.HUMAN_UPRIGHT_K - av.y * K.HUMAN_UPRIGHT_D, -200, 200);
-          const tz = clamp(tilt.z * K.HUMAN_UPRIGHT_K - av.z * K.HUMAN_UPRIGHT_D, -200, 200);
+          const tx = clamp(tilt.x * K.HUMAN_UPRIGHT_K - av.x * K.HUMAN_UPRIGHT_D, -300, 300);
+          const ty = clamp(tilt.y * K.HUMAN_UPRIGHT_K - av.y * K.HUMAN_UPRIGHT_D, -300, 300);
+          const tz = clamp(tilt.z * K.HUMAN_UPRIGHT_K - av.z * K.HUMAN_UPRIGHT_D, -300, 300);
           torso.body.applyTorqueImpulse({ x: tx * dt, y: ty * dt, z: tz * dt }, true);
         }
       }
@@ -1453,7 +1515,6 @@
               position: new THREE.Vector3(px, 0, pz),
               yaw: Math.atan2(-px, -pz),
               aiState: 'approach',
-              targetPos: new THREE.Vector3(0, 0, 0),
             });
             if (def.boss && i === 0) this.upgradeBoss(h);
             this.ai.register(h);
@@ -1472,30 +1533,30 @@
           for (const limb of h.limbs.values()) {
             const m = limb.collider.mass();
             limb.collider.setMass(m * 2.5);
-            limb.mesh.scale.setScalar(1.35);
+            limb.mesh.scale.multiplyScalar(1.4);
           }
           for (const j of h.joints.values()) j.def.hp *= 1.5;
-          h.ai.moveSpeed = 1.0; h.ai.painTolerance = 1.4; h.morale = 200;
+          h.ai.moveSpeed = 1.2; h.ai.painTolerance = 1.4; h.morale = 200;
         }
       }
 
       /* ───── CROWD ───── */
-      const RING_R = K.ARENA_RADIUS + 3, RING_H = 3.2, ROWS = 3, PER_ROW = 40, TOTAL = ROWS * PER_ROW;
+      const RING_R = K.ARENA_RADIUS + 3, RING_H = 3.0, ROWS = 3, PER_ROW = 40, TOTAL = ROWS * PER_ROW;
       class Crowd {
         constructor(scene) {
-          const geo = new THREE.CapsuleGeometry(0.12, 0.35, 3, 6);
-          const mat = new THREE.MeshStandardMaterial({ color: 0x808898, roughness: 0.9 });
+          const geo = new THREE.CapsuleGeometry(0.14, 0.4, 3, 6);
+          const mat = new THREE.MeshStandardMaterial({ color: 0xa0a8b8, roughness: 0.9 });
           this.mesh = new THREE.InstancedMesh(geo, mat, TOTAL);
           this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
           scene.add(this.mesh);
           this.specs = []; this.dummy = new THREE.Object3D(); this._t = 0;
           for (let r = 0; r < ROWS; r++) {
-            const radius = RING_R + r * 0.8, y = RING_H + r * 0.5;
+            const radius = RING_R + r * 0.9, y = RING_H + r * 0.55;
             for (let i = 0; i < PER_ROW; i++) {
               const a = (i / PER_ROW) * Math.PI * 2;
               const idx = r * PER_ROW + i;
               this.specs.push({ baseY: y, phase: Math.random() * Math.PI * 2, excite: 0, angle: a, radius });
-              const c = new THREE.Color().setHSL(0.55 + Math.random() * 0.2, 0.4, 0.3 + Math.random() * 0.2);
+              const c = new THREE.Color().setHSL(0.5 + Math.random() * 0.4, 0.5, 0.4 + Math.random() * 0.25);
               this.mesh.setColorAt(idx, c);
             }
           }
@@ -1513,8 +1574,8 @@
           for (let i = 0; i < TOTAL; i++) {
             const s = this.specs[i];
             s.excite = Math.max(0, s.excite - dt * 1.2);
-            const idle = Math.sin(this._t * 1.2 + s.phase) * 0.02;
-            const jump = s.excite * (0.35 + Math.sin(this._t * 18 + s.phase) * 0.15);
+            const idle = Math.sin(this._t * 1.2 + s.phase) * 0.03;
+            const jump = s.excite * (0.4 + Math.sin(this._t * 18 + s.phase) * 0.15);
             const x = Math.cos(s.angle) * s.radius, z = Math.sin(s.angle) * s.radius;
             this.dummy.position.set(x, s.baseY + idle + Math.max(0, jump), z);
             this.dummy.rotation.set(Math.sin(this._t * 10 + s.phase) * 0.15 * s.excite, -s.angle + Math.PI / 2, 0);
@@ -1537,16 +1598,17 @@
           this.engine.world.createCollider(RAPIER.ColliderDesc.cylinder(0.15, R).setFriction(0.9), rb);
           const mesh = new THREE.Mesh(
             new THREE.CylinderGeometry(R, R, 0.3, 64),
-            new THREE.MeshStandardMaterial({ color: 0x4a3a26, roughness: 0.95 })
+            new THREE.MeshStandardMaterial({ color: 0x8a7a5a, roughness: 0.95 })
           );
           mesh.receiveShadow = true; mesh.position.y = -0.15;
           this.engine.scene.add(mesh);
           const ring = new THREE.Mesh(
-            new THREE.RingGeometry(R * 0.65, R * 0.66, 64),
-            new THREE.MeshBasicMaterial({ color: 0x6b3010, side: THREE.DoubleSide, transparent: true, opacity: 0.6 })
+            new THREE.RingGeometry(R * 0.7, R * 0.72, 64),
+            new THREE.MeshBasicMaterial({ color: 0x8a4020, side: THREE.DoubleSide, transparent: true, opacity: 0.7 })
           );
-          ring.rotation.x = -Math.PI / 2; ring.position.y = 0.01;
+          ring.rotation.x = -Math.PI / 2; ring.position.y = 0.02;
           this.engine.scene.add(ring);
+          // кольцо-индикатор под роботом
         }
         buildWalls() {
           const R = K.ARENA_RADIUS, H = K.ARENA_WALL_HEIGHT, N = K.ARENA_WALL_SEGMENTS;
@@ -1563,7 +1625,7 @@
             this.engine.world.createCollider(RAPIER.ColliderDesc.cuboid(w / 2, H / 2, thickness / 2).setFriction(0.8), rb);
             const mesh = new THREE.Mesh(
               new THREE.BoxGeometry(w, H, thickness),
-              new THREE.MeshStandardMaterial({ color: 0x2a2118, roughness: 0.9, metalness: 0.2 })
+              new THREE.MeshStandardMaterial({ color: 0x5a4a35, roughness: 0.85, metalness: 0.15 })
             );
             mesh.position.set(cx, H / 2, cz);
             mesh.rotation.y = -a;
@@ -1574,21 +1636,21 @@
         buildDecor() {
           for (const [x, z] of [[-6,-6],[6,-6],[-6,6],[6,6]]) {
             const pillar = new THREE.Mesh(
-              new THREE.CylinderGeometry(0.25, 0.35, 4, 8),
-              new THREE.MeshStandardMaterial({ color: 0x3a2c1c, roughness: 1 })
+              new THREE.CylinderGeometry(0.28, 0.4, 4, 8),
+              new THREE.MeshStandardMaterial({ color: 0x6a5040, roughness: 0.95 })
             );
-            pillar.position.set(x, 2, z); pillar.castShadow = true;
+            pillar.position.set(x, 2, z); pillar.castShadow = true; pillar.receiveShadow = true;
             this.engine.scene.add(pillar);
             const rb = this.engine.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(x, 2, z));
-            this.engine.world.createCollider(RAPIER.ColliderDesc.cylinder(2, 0.35).setFriction(0.7), rb);
+            this.engine.world.createCollider(RAPIER.ColliderDesc.cylinder(2, 0.4).setFriction(0.7), rb);
           }
         }
         buildTribune() {
           const trib = new THREE.Mesh(
             new THREE.CylinderGeometry(K.ARENA_RADIUS + 6, K.ARENA_RADIUS + 6, 1, 64, 1, true),
-            new THREE.MeshStandardMaterial({ color: 0x2a2218, side: THREE.DoubleSide })
+            new THREE.MeshStandardMaterial({ color: 0x4a3a28, side: THREE.DoubleSide })
           );
-          trib.position.y = 3.0;
+          trib.position.y = 2.8;
           this.engine.scene.add(trib);
         }
         fixedUpdate() {} update() {}
@@ -1602,19 +1664,19 @@
         }
         createDOM() {
           const panel = document.createElement('div');
-          panel.style.cssText = 'position:fixed;left:16px;top:16px;color:#eee;font:14px/1.4 monospace;pointer-events:none;user-select:none;text-shadow:0 1px 2px #000;z-index:40';
+          panel.style.cssText = 'position:fixed;left:16px;top:16px;color:#fff;font:14px/1.4 monospace;pointer-events:none;user-select:none;text-shadow:0 2px 4px #000,0 0 8px #000;z-index:40';
           panel.innerHTML = `
             <div style="margin-bottom:8px">
-              <div style="color:#888;font-size:11px">БРОНЯ</div>
-              <div style="width:180px;height:14px;background:#200;border:1px solid #555;position:relative">
-                <div id="hp-fill" style="width:100%;height:100%;background:linear-gradient(90deg,#0a4,#2a8);transition:width 150ms"></div>
-                <div id="hp-text" style="position:absolute;inset:0;text-align:center;font-size:11px;line-height:14px">100</div>
+              <div style="color:#bbb;font-size:11px">БРОНЯ</div>
+              <div style="width:200px;height:16px;background:#300;border:1px solid #666;position:relative;box-shadow:0 2px 4px rgba(0,0,0,0.6)">
+                <div id="hp-fill" style="width:100%;height:100%;background:linear-gradient(90deg,#0c4,#2e8);transition:width 150ms"></div>
+                <div id="hp-text" style="position:absolute;inset:0;text-align:center;font-size:11px;line-height:16px;font-weight:bold">100</div>
               </div>
             </div>
-            <div id="wave-text" style="font-size:12px;color:#ccc"></div>
-            <div style="font-size:11px;color:#666;margin-top:8px;line-height:1.6">
+            <div id="wave-text" style="font-size:13px;color:#ddd;font-weight:bold"></div>
+            <div style="font-size:11px;color:#aaa;margin-top:10px;line-height:1.7;text-shadow:0 1px 3px #000">
               WASD — ходьба · Space — прыжок · Shift — рывок<br>
-              ЛКМ — захват · ПКМ — рвать · E — подобрать/отобрать<br>
+              ЛКМ — захват · ПКМ — рвать · E — подобрать<br>
               F — метнуть · R — пропустить волну
             </div>`;
           document.body.appendChild(panel);
@@ -1622,13 +1684,13 @@
           this.hpText = panel.querySelector('#hp-text');
           this.waveText = panel.querySelector('#wave-text');
           this.ripBar = document.createElement('div');
-          this.ripBar.style.cssText = 'position:fixed;left:50%;bottom:60px;transform:translateX(-50%);width:220px;height:8px;background:rgba(0,0,0,0.6);border:1px solid #444;display:none;z-index:40';
+          this.ripBar.style.cssText = 'position:fixed;left:50%;bottom:80px;transform:translateX(-50%);width:260px;height:10px;background:rgba(0,0,0,0.7);border:1px solid #666;display:none;z-index:40;box-shadow:0 2px 6px rgba(0,0,0,0.8)';
           this.ripFill = document.createElement('div');
           this.ripFill.style.cssText = 'width:0%;height:100%;background:linear-gradient(90deg,#b00,#f33);transition:width 60ms linear';
           this.ripBar.appendChild(this.ripFill);
           document.body.appendChild(this.ripBar);
           this.messageBox = document.createElement('div');
-          this.messageBox.style.cssText = 'position:fixed;left:50%;top:30%;transform:translate(-50%,-50%);color:#fff;font:700 32px/1.2 sans-serif;text-align:center;text-shadow:0 2px 8px #000,0 0 20px #f00;pointer-events:none;opacity:0;transition:opacity 250ms;z-index:45';
+          this.messageBox.style.cssText = 'position:fixed;left:50%;top:30%;transform:translate(-50%,-50%);color:#fff;font:700 40px/1.2 sans-serif;text-align:center;text-shadow:0 2px 12px #000,0 0 24px #f00;pointer-events:none;opacity:0;transition:opacity 250ms;z-index:45';
           document.body.appendChild(this.messageBox);
           this.vignette = document.getElementById('vignette');
           this.flash = document.getElementById('flash');
@@ -1663,7 +1725,7 @@
           this.hpText.textContent = String(Math.round(hp));
           if (pct < 30) this.hpFill.style.background = 'linear-gradient(90deg,#a00,#f33)';
           else if (pct < 60) this.hpFill.style.background = 'linear-gradient(90deg,#a80,#fa0)';
-          else this.hpFill.style.background = 'linear-gradient(90deg,#0a4,#2a8)';
+          else this.hpFill.style.background = 'linear-gradient(90deg,#0c4,#2e8)';
           const vigA = Math.max(0, (60 - pct) / 100);
           this.vignette.style.boxShadow = `inset 0 0 180px 40px rgba(180,0,0,${vigA * 1.2})`;
         }
@@ -1677,15 +1739,15 @@
           const wrap = document.createElement('div');
           wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.88);display:flex;align-items:center;justify-content:center;color:#eee;font:16px/1.5 monospace;z-index:1000;flex-direction:column;text-align:center';
           wrap.innerHTML = `
-            <div style="font-size:48px;font-weight:700;color:${win ? '#4f4' : '#f44'};margin-bottom:24px">${title}</div>
-            <div style="font-size:14px;color:#aaa;min-width:320px;text-align:left">
-              <div>Волн пройдено: <b>${stats.wave}</b></div>
-              <div>Людей убито: <b>${stats.humansKilled}</b></div>
-              <div>Конечностей оторвано: <b>${stats.limbsRipped}</b></div>
-              <div>Оружий подобрано: <b>${stats.weaponsPicked}</b></div>
-              <div>Время: <b>${stats.timeSec.toFixed(1)} с</b></div>
+            <div style="font-size:56px;font-weight:700;color:${win ? '#4f8' : '#f44'};margin-bottom:24px;text-shadow:0 0 20px currentColor">${title}</div>
+            <div style="font-size:14px;color:#ccc;min-width:340px;text-align:left;line-height:2">
+              <div>Волн пройдено: <b style="color:#fff">${stats.wave}</b></div>
+              <div>Людей убито: <b style="color:#fff">${stats.humansKilled}</b></div>
+              <div>Конечностей оторвано: <b style="color:#fff">${stats.limbsRipped}</b></div>
+              <div>Оружий подобрано: <b style="color:#fff">${stats.weaponsPicked}</b></div>
+              <div>Время: <b style="color:#fff">${stats.timeSec.toFixed(1)} с</b></div>
             </div>
-            <button id="restart" style="margin-top:32px;padding:10px 24px;font:16px monospace;background:#333;color:#eee;border:1px solid #666;cursor:pointer">ЗАНОВО</button>`;
+            <button id="restart" style="margin-top:32px;padding:12px 28px;font:16px monospace;background:#f33;color:#fff;border:none;cursor:pointer;font-weight:bold">ЗАНОВО</button>`;
           document.body.appendChild(wrap);
           wrap.querySelector('#restart').addEventListener('click', () => location.reload());
         }
@@ -1700,14 +1762,17 @@
           this.renderer.shadowMap.enabled = true;
           this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
           this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-          this.renderer.toneMappingExposure = 1.05;
+          this.renderer.toneMappingExposure = 1.25;
           container.appendChild(this.renderer.domElement);
+
           this.scene = new THREE.Scene();
-          this.scene.background = new THREE.Color(0x1a1410);
-          this.scene.fog = new THREE.Fog(0x1a1410, 25, 55);
-          this.camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200);
+          this.scene.background = new THREE.Color(0x8899bb);
+          this.scene.fog = new THREE.Fog(0x8899bb, 40, 100);
+
+          this.camera = new THREE.PerspectiveCamera(K.CAM_FOV, innerWidth / innerHeight, 0.1, 200);
           this.camera.position.set(0, 4, 8);
           this.camera.lookAt(0, 1, 0);
+
           this.clock = new THREE.Clock();
           this.accumulator = 0;
           this.systems = [];
@@ -1724,20 +1789,25 @@
           this.shakeTime = this.shakeDur;
         }
         setupLights() {
-          this.scene.add(new THREE.HemisphereLight(0xb8c4d8, 0x2a1e14, 0.8));
-          const sun = new THREE.DirectionalLight(0xffe6c4, 1.4);
-          sun.position.set(8, 14, 6);
+          // ambient — равномерное освещение
+          this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+          // hemisphere — верх/низ разного цвета
+          this.scene.add(new THREE.HemisphereLight(0xddeeff, 0x776655, 1.0));
+          // sun — основные тени
+          const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+          sun.position.set(10, 20, 8);
           sun.castShadow = true;
           sun.shadow.mapSize.set(2048, 2048);
-          const d = 18;
+          const d = 20;
           sun.shadow.camera.left = -d; sun.shadow.camera.right = d;
           sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
-          sun.shadow.camera.near = 1; sun.shadow.camera.far = 50;
-          sun.shadow.bias = -0.0005;
+          sun.shadow.camera.near = 1; sun.shadow.camera.far = 60;
+          sun.shadow.bias = -0.0003;
           this.scene.add(sun); this.scene.add(sun.target);
-          const fire = new THREE.PointLight(0xff3010, 1.2, 30);
-          fire.position.set(0, 1.5, 0);
-          this.scene.add(fire);
+          // fill light с противоположной стороны
+          const fill = new THREE.DirectionalLight(0xffddaa, 0.5);
+          fill.position.set(-8, 10, -6);
+          this.scene.add(fill);
         }
         onResize() {
           this.camera.aspect = innerWidth / innerHeight;
@@ -1779,7 +1849,7 @@
       const engine = new Engine(root);
       engine.world = new RAPIER.World({ x: 0, y: K.GRAVITY, z: 0 });
       engine.world.timestep = K.FIXED_DT;
-      log('мир физики создан');
+      log('мир создан');
 
       const audio = new AudioSystem();
       try { audio.init(engine.camera); } catch (e) { console.warn('audio:', e); }
@@ -1814,35 +1884,48 @@
         if (weaponSys.tryPickupForRobot()) eventBus.emit('weapon:pickedByRobot');
         else { const g = grab.current(); if (g) weaponSys.tryDisarm(g.human, robot.getPosition()); }
       });
+
+      /* ─── БРОСОК — фикс: сначала удалить joint, потом импульс ─── */
       eventBus.on('robot:throw', () => {
         const cam = robot.getCamera();
         const dir = new THREE.Vector3();
         cam.getWorldDirection(dir);
         const g = grab.current();
         if (g) {
+          // СНАЧАЛА удалить физический joint — иначе он держит тело у руки
+          try { robot.getWorld().removeImpulseJoint(g.joint, true); } catch (e) {}
           if (g.limb.detached) {
             g.limb.body.applyImpulse({
-              x: dir.x * K.THROW_LIMB_IMPULSE, y: dir.y * K.THROW_LIMB_IMPULSE + 300, z: dir.z * K.THROW_LIMB_IMPULSE,
+              x: dir.x * K.THROW_LIMB_IMPULSE,
+              y: dir.y * K.THROW_LIMB_IMPULSE + 400,
+              z: dir.z * K.THROW_LIMB_IMPULSE,
             }, true);
           } else {
+            // швыряем всё тело
             for (const l of g.human.limbs.values()) {
               if (l.detached) continue;
               l.body.applyImpulse({
-                x: dir.x * K.THROW_BODY_IMPULSE * 0.15, y: dir.y * K.THROW_BODY_IMPULSE * 0.15 + 80, z: dir.z * K.THROW_BODY_IMPULSE * 0.15,
+                x: dir.x * K.THROW_BODY_IMPULSE * 0.2,
+                y: dir.y * K.THROW_BODY_IMPULSE * 0.2 + 150,
+                z: dir.z * K.THROW_BODY_IMPULSE * 0.2,
               }, true);
             }
-            if (g.human.alive) { g.human.ai.state = 'flinch'; g.human.ai.stateTimer = 1.5; }
+            if (g.human.alive) {
+              g.human.ai.state = 'flinch';
+              g.human.ai.stateTimer = 2.0;
+            }
           }
           grab.forceRelease();
           eventBus.emit('rip:progress', 0);
-          engine.addShake(0.08, 0.2);
+          engine.addShake(0.1, 0.25);
+          audio.play('dash_whoosh', { pos: robot.getRightHandPos() });
           return;
         }
         const held = robot.getHeldWeapon();
         if (held) {
           weaponSys.throwWeapon(held, dir, K.THROW_WEAPON_IMPULSE);
           robot.setHeldWeapon(null);
-          engine.addShake(0.04, 0.15);
+          engine.addShake(0.05, 0.15);
         }
       });
 
@@ -1863,8 +1946,14 @@
       waves.registerStatsListeners();
       waves.start();
       engine.start();
-      log('игра запущена');
 
+      // прицел видим только при pointer lock — покажем сразу после первого клика
+      const crosshair = document.getElementById('crosshair');
+      document.addEventListener('pointerlockchange', () => {
+        if (crosshair) crosshair.style.display = document.pointerLockElement ? 'block' : 'none';
+      });
+
+      log('игра запущена');
       window.__engine = engine;
       window.__robot = robot;
       window.__grab = grab;
@@ -1875,17 +1964,15 @@
       });
     }
 
-    /* ═════════ MAIN ═════════ */
     (async () => {
       try {
-        log('старт загрузки');
+        log('старт');
         const THREE = await loadThree();
         const RAPIER = await loadRapier();
-        log('запускаю игру...');
         startGame(THREE, RAPIER);
         document.getElementById('loading').style.display = 'none';
         window.__app_ready = true;
-        log('ВСЁ ГОТОВО');
+        log('ГОТОВО');
       } catch (err) {
         showError('Запуск не удался', err);
       }

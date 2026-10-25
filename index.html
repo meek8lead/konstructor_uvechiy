@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>РАЗБОРКА — prototype</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; }
+    canvas { display: block; }
+    #app { width: 100%; height: 100%; }
+    #vignette {
+      position: fixed; inset: 0; pointer-events: none;
+      box-shadow: inset 0 0 180px 40px rgba(180,0,0,0);
+      transition: box-shadow 200ms;
+      z-index: 50;
+    }
+    #flash {
+      position: fixed; inset: 0; pointer-events: none;
+      background: #f00; opacity: 0; z-index: 60;
+      transition: opacity 400ms;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://esm.sh/three@0.160.0",
+      "rapier": "https://esm.sh/@dimforge/rapier3d-compat@0.14.0",
+      "howler": "https://esm.sh/howler@2.2.4"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="vignette"></div>
+  <div id="flash"></div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

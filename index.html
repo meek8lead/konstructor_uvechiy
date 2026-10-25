@@ -82,9 +82,7 @@
   </div>
 
   <script type="module">
-    /* ═══════════════════════════════════════════════════════════
-       LOADING STATE + ERROR HANDLING
-       ═══════════════════════════════════════════════════════════ */
+    /* ═════════ LOADING / ERROR ═════════ */
     const loadLogs = [];
     function log(msg) {
       loadLogs.push(msg);
@@ -92,21 +90,17 @@
       const el = document.getElementById('load-status');
       if (el) el.textContent = msg;
     }
-
     function showError(title, err) {
       console.error('[RAZBORKA ERROR]', title, err);
       const l = document.getElementById('loading');
       if (l) l.style.display = 'none';
       const e = document.getElementById('error');
       if (e) e.style.display = 'block';
-      const t = document.getElementById('error-title');
-      if (t) t.textContent = title;
+      document.getElementById('error-title').textContent = title;
       const d = document.getElementById('error-details');
-      if (d) {
-        const msg = err ? (err.stack || err.message || String(err)) : '(нет сообщения)';
-        d.textContent = msg + '\n\n──────── Логи загрузки ────────\n' +
-          (loadLogs.length ? loadLogs.join('\n') : '(пусто)');
-      }
+      const msg = err ? (err.stack || err.message || String(err)) : '(нет сообщения)';
+      d.textContent = msg + '\n\n──────── Логи загрузки ────────\n' +
+        (loadLogs.length ? loadLogs.join('\n') : '(пусто)');
     }
     window.__showError = showError;
     window.__log = log;
@@ -119,15 +113,13 @@
     });
     setTimeout(() => {
       if (!window.__app_ready) {
-        showError('Таймаут 60 секунд',
-          new Error('Загрузка не завершилась. Скорее всего браузер не может достучаться до CDN.\n' +
-                    'Проверь вкладку Network в DevTools (F12) — какие запросы висят красным.'));
+        showError('Таймаут 60 секунд', new Error(
+          'Загрузка не завершилась. Скорее всего браузер не может достучаться до CDN.\n' +
+          'Проверь вкладку Network в DevTools (F12).'));
       }
     }, 60000);
 
-    /* ═══════════════════════════════════════════════════════════
-       ДИНАМИЧЕСКАЯ ЗАГРУЗКА С ФОЛБЭКАМИ
-       ═══════════════════════════════════════════════════════════ */
+    /* ═════════ ДИНАМ. ЗАГРУЗКА ═════════ */
     async function withTimeout(promise, ms, label) {
       let timer;
       const timeout = new Promise((_, rej) => {
@@ -154,7 +146,7 @@
           log('three: fail → ' + (e.message || e));
         }
       }
-      throw new Error('Three.js не загрузился ни с одного CDN (проверь интернет / VPN / блокировщики)');
+      throw new Error('Three.js не загрузился ни с одного CDN');
     }
 
     async function loadRapier() {
@@ -181,36 +173,41 @@
       throw new Error('Rapier не загрузился ни с одного CDN');
     }
 
-    /* ═══════════════════════════════════════════════════════════
-       ИГРА
-       ═══════════════════════════════════════════════════════════ */
+    /* ═════════ ИГРА ═════════ */
     function startGame(THREE, RAPIER) {
-      /* ─────────── КОНСТАНТЫ ─────────── */
       const K = {
         ROBOT_MASS: 400, ROBOT_RADIUS: 0.55, ROBOT_HALF_HEIGHT: 0.9,
         ROBOT_SPEED: 6, ROBOT_JUMP: 5,
         ROBOT_DASH_IMPULSE: 2400, ROBOT_DASH_COOLDOWN: 0.9,
         ROBOT_HP_MAX: 100, ROBOT_REPAIR_PCT: 0.25,
-        HUMAN_MOTOR_STIFFNESS: 900, HUMAN_MOTOR_DAMPING: 90,
-        HUMAN_WALK_PHASE_SPEED: 4.0, HUMAN_HIP_AMP: 0.35, HUMAN_KNEE_AMP: 0.7,
-        HUMAN_WALK_IMPULSE_K: 400,
-        HUMAN_UPRIGHT_K: 500, HUMAN_UPRIGHT_D: 50,
+
+        HUMAN_MOTOR_STIFFNESS: 300, HUMAN_MOTOR_DAMPING: 30,
+        HUMAN_WALK_PHASE_SPEED: 5.0,
+        HUMAN_HIP_AMP: 0.30, HUMAN_KNEE_AMP: 0.5,
+        HUMAN_WALK_IMPULSE_K: 4,
+        HUMAN_UPRIGHT_K: 40, HUMAN_UPRIGHT_D: 8,
+
         RIP_FORCE_BASE: 9000, RIP_EFF_MIN: 0.4,
-        GRAB_RADIUS: 3.2, SHOCK_JOINT_MULT: 0.7,
+        GRAB_RADIUS: 4.0, SHOCK_JOINT_MULT: 0.7,
         DEATH_LIMB_THRESHOLD: 3, DEATH_BLEEDOUT_TIME: 5.0,
+
         THROW_LIMB_IMPULSE: 3500, THROW_BODY_IMPULSE: 1800, THROW_WEAPON_IMPULSE: 1500,
-        AI_SPEED_BASE: 1.4, AI_WIND_UP_SEC: 0.18,
+
+        AI_SPEED_BASE: 1.6, AI_WIND_UP_SEC: 0.18,
         MORALE_DROP_PER_KILL: 20, MORALE_FLEE_THRESHOLD: 30, MORALE_RADIUS: 8,
-        ARENA_RADIUS: 14, ARENA_WALL_HEIGHT: 2, ARENA_WALL_SEGMENTS: 24,
+
+        ARENA_RADIUS: 10, ARENA_WALL_HEIGHT: 2, ARENA_WALL_SEGMENTS: 20,
+
         FIXED_DT: 1/60, GRAVITY: -20, MAX_SUBSTEPS: 5,
-        CAM_MIN_DIST: 4, CAM_MAX_DIST: 12, CAM_DEFAULT_DIST: 7.5,
-        CAM_MIN_PITCH: 0.15, CAM_MAX_PITCH: 1.2,
+
+        CAM_MIN_DIST: 3, CAM_MAX_DIST: 10, CAM_DEFAULT_DIST: 5.5,
+        CAM_MIN_PITCH: 0.2, CAM_MAX_PITCH: 0.9,
         CAM_YAW_SENS: 0.0035, CAM_PITCH_SENS: 0.0030,
-        CAM_TARGET_HEIGHT: 1.6, CAM_SMOOTH: 8,
+        CAM_TARGET_HEIGHT: 1.4, CAM_SMOOTH: 8,
+
         WAVE_PAUSE_SEC: 5.0,
       };
 
-      /* ─────────── EVENT BUS ─────────── */
       class EventBus {
         constructor() { this.map = new Map(); }
         on(e, h) {
@@ -227,7 +224,6 @@
       const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
       const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 
-      /* ─────────── МАТЕРИАЛЫ ─────────── */
       const MAT = {
         steel: new THREE.MeshStandardMaterial({ color: 0x5b6470, roughness: 0.55, metalness: 0.85 }),
         steelDark: new THREE.MeshStandardMaterial({ color: 0x2b3138, roughness: 0.7, metalness: 0.6 }),
@@ -239,7 +235,7 @@
       };
       const CLOTH_POOL = [MAT.clothRed, MAT.clothBlue, MAT.clothGreen, MAT.clothBrown];
 
-      /* ─────────── СКЕЛЕТ ─────────── */
+      /* ───── СКЕЛЕТ ───── */
       const SEGMENTS = [
         { id:'torso',    shape:'capsule', halfHeight:0.10, radius:0.15, restPos:[0,1.37,0], mass:22, material:'cloth' },
         { id:'pelvis',   shape:'box', halfExtents:[0.17,0.10,0.12], restPos:[0,1.02,0], mass:14, material:'cloth' },
@@ -287,7 +283,7 @@
         return mesh;
       }
 
-      /* ─────────── FACTORY ─────────── */
+      /* ───── FACTORY ───── */
       let nextEid = 1, nextHumanId = 0;
       function cgHuman(id) {
         const bit = 4 + (id % 12);
@@ -393,7 +389,7 @@
         }
       }
 
-      /* ─────────── ОРУЖИЕ ─────────── */
+      /* ───── ОРУЖИЕ ───── */
       const WEAPONS = {
         bat:     { kind:'bat',     damage:12, mass:1.2, reach:1.1, cooldown:1.1, canDisarm:true, length:0.75, thickness:0.06, color:0x6a4520, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
         pipe:    { kind:'pipe',    damage:15, mass:2.0, reach:1.3, cooldown:1.3, canDisarm:true, length:0.9,  thickness:0.05, color:0x555a60, attachmentLocal:[0,-0.14,0], gripLocal:[0,0,0] },
@@ -657,7 +653,7 @@
         }
       }
 
-      /* ─────────── AUDIO ─────────── */
+      /* ───── AUDIO ───── */
       const SFX_NAMES = [
         'punch_flesh','punch_metal','weapon_hit','bone_snap','squelch_big','wet_tear','stump_pop',
         'grab_hiss','rip_creak','scream_hit','scream_rip','scream_flee','death_gurgle',
@@ -747,7 +743,7 @@
         updateListener(camera) { this.camera = camera; }
       }
 
-      /* ─────────── BLOOD ─────────── */
+      /* ───── BLOOD ───── */
       const MAX_PARTICLES = 2000;
       class BloodSystem {
         constructor(scene) {
@@ -824,7 +820,7 @@
         }
       }
 
-      /* ─────────── ROBOT ─────────── */
+      /* ───── ROBOT ───── */
       class RobotController {
         constructor(engine) {
           this.engine = engine;
@@ -836,8 +832,11 @@
           this._eHeld = false; this._fHeld = false;
           this.hp = K.ROBOT_HP_MAX;
           this.bodyColliderHandle = -1;
+          this.rightHandColliderHandle = -1;
           this.heldWeapon = null;
           this.handTargetPos = new THREE.Vector3();
+          this.handVisual = null;
+          this.handLine = null;
           this.ripHold = false;
           this.createBody();
           this.createVisual();
@@ -858,9 +857,10 @@
           this.rightHand = this.engine.world.createRigidBody(
             RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, 3, 0)
           );
-          this.engine.world.createCollider(
+          const handCol = this.engine.world.createCollider(
             RAPIER.ColliderDesc.ball(0.12).setCollisionGroups(0), this.rightHand
           );
+          this.rightHandColliderHandle = handCol.handle;
         }
         createVisual() {
           this.root = new THREE.Group();
@@ -879,14 +879,28 @@
             eye.position.set(sx * 0.13, K.ROBOT_HALF_HEIGHT + 0.37, 0.28);
             this.root.add(eye);
           }
-          for (const sx of [-1, 1]) {
-            const sh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), MAT.steelDark);
-            sh.position.set(sx * (K.ROBOT_RADIUS + 0.1), 0.45, 0); sh.castShadow = true; this.root.add(sh);
-            const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.7, 4, 8), MAT.steel);
-            arm.position.set(sx * (K.ROBOT_RADIUS + 0.1), 0.05, 0); arm.castShadow = true; this.root.add(arm);
-            const hand = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), MAT.steelDark);
-            hand.position.set(sx * (K.ROBOT_RADIUS + 0.1), -0.38, 0); hand.castShadow = true; this.root.add(hand);
-          }
+          // левая рука — статичная
+          const shL = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), MAT.steelDark);
+          shL.position.set(-(K.ROBOT_RADIUS + 0.1), 0.45, 0);
+          shL.castShadow = true; this.root.add(shL);
+          const armL = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.7, 4, 8), MAT.steel);
+          armL.position.set(-(K.ROBOT_RADIUS + 0.1), 0.05, 0);
+          armL.castShadow = true; this.root.add(armL);
+          const handL = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), MAT.steelDark);
+          handL.position.set(-(K.ROBOT_RADIUS + 0.1), -0.38, 0);
+          handL.castShadow = true; this.root.add(handL);
+          // правое плечо — статика (основание манипулятора)
+          const shR = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), MAT.steelDark);
+          shR.position.set(K.ROBOT_RADIUS + 0.1, 0.45, 0);
+          shR.castShadow = true; this.root.add(shR);
+          // визуальная кисть манипулятора
+          this.handVisual = new THREE.Mesh(
+            new THREE.BoxGeometry(0.26, 0.26, 0.26),
+            new THREE.MeshStandardMaterial({ color: 0xa0a8b0, emissive: 0x441111, metalness: 0.8, roughness: 0.3 })
+          );
+          this.handVisual.castShadow = true;
+          this.engine.scene.add(this.handVisual);
+          this.handLine = null;
           this.engine.scene.add(this.root);
         }
         bindInput() {
@@ -961,6 +975,7 @@
         update(dt) {
           const t = this.body.translation();
           this.root.position.set(t.x, t.y, t.z);
+          this.root.rotation.y = this.yaw;
           const tp = new THREE.Vector3(t.x, t.y + K.CAM_TARGET_HEIGHT, t.z);
           this.camTarget.lerp(tp, 1 - Math.exp(-K.CAM_SMOOTH * dt));
           const r = this.camDist * Math.cos(this.pitch);
@@ -971,6 +986,25 @@
             this.camTarget.z + Math.cos(this.yaw) * r
           );
           this.engine.camera.lookAt(this.camTarget);
+
+          // визуальный манипулятор
+          if (this.handVisual) {
+            this.handVisual.position.copy(this.handTargetPos);
+            const shoulderLocal = new THREE.Vector3(K.ROBOT_RADIUS + 0.1, 0.45, 0);
+            const shoulderWorld = shoulderLocal.clone()
+              .applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw)
+              .add(new THREE.Vector3(t.x, t.y, t.z));
+            if (!this.handLine) {
+              const geo = new THREE.BufferGeometry();
+              geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+              this.handLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xff4444 }));
+              this.engine.scene.add(this.handLine);
+            }
+            const arr = this.handLine.geometry.attributes.position.array;
+            arr[0] = shoulderWorld.x; arr[1] = shoulderWorld.y; arr[2] = shoulderWorld.z;
+            arr[3] = this.handTargetPos.x; arr[4] = this.handTargetPos.y; arr[5] = this.handTargetPos.z;
+            this.handLine.geometry.attributes.position.needsUpdate = true;
+          }
         }
         getPosition() { const t = this.body.translation(); return new THREE.Vector3(t.x, t.y, t.z); }
         getRightHand() { return this.rightHand; }
@@ -979,6 +1013,7 @@
         getWorld() { return this.engine.world; }
         getHp() { return this.hp; }
         getBodyColliderHandle() { return this.bodyColliderHandle; }
+        getRightHandColliderHandle() { return this.rightHandColliderHandle; }
         getHeldWeapon() { return this.heldWeapon; }
         setHeldWeapon(w) { this.heldWeapon = w; }
         damage(a) {
@@ -993,7 +1028,7 @@
         }
       }
 
-      /* ─────────── GRAB ─────────── */
+      /* ───── GRAB ───── */
       class GrabSystem {
         constructor(robot) { this.robot = robot; this.grab = null; this._v = new THREE.Vector3(); }
         current() { return this.grab; }
@@ -1003,15 +1038,28 @@
           const origin = cam.position;
           const dir = this._v.set(0, 0, -1).applyQuaternion(cam.quaternion);
           const ray = new RAPIER.Ray({ x: origin.x, y: origin.y, z: origin.z }, { x: dir.x, y: dir.y, z: dir.z });
-          const hit = this.robot.getWorld().castRay(ray, 60, true);
-          if (!hit) return false;
+          const bodyHandle = this.robot.getBodyColliderHandle();
+          const handHandle = this.robot.getRightHandColliderHandle();
+          const hit = this.robot.getWorld().castRay(
+            ray, 60, true,
+            undefined, undefined, undefined, undefined,
+            (collider) => {
+              const h = collider.handle;
+              return h !== bodyHandle && h !== handHandle;
+            }
+          );
+          if (!hit) { console.log('[grab] промах: луч не попал'); return false; }
           const ref = colliderRegistry.get(hit.collider.handle);
-          if (!ref) return false;
+          if (!ref) { console.log('[grab] попал не в человека'); return false; }
           const limb = ref.human.limbs.get(ref.segmentId);
           if (!limb) return false;
           const handPos = this.robot.getRightHandPos();
           const t = limb.body.translation();
-          if (handPos.distanceTo(new THREE.Vector3(t.x, t.y, t.z)) > K.GRAB_RADIUS) return false;
+          const dist = handPos.distanceTo(new THREE.Vector3(t.x, t.y, t.z));
+          if (dist > K.GRAB_RADIUS) {
+            console.log('[grab] слишком далеко:', dist.toFixed(2));
+            return false;
+          }
           const hitWorld = new THREE.Vector3(
             origin.x + dir.x * hit.timeOfImpact,
             origin.y + dir.y * hit.timeOfImpact,
@@ -1035,7 +1083,7 @@
         forceRelease() { this.grab = null; }
       }
 
-      /* ─────────── RIP ─────────── */
+      /* ───── RIP ───── */
       class RipSystem {
         constructor(engine, robot, grab, blood, factory, weaponSys, audio) {
           this.engine = engine; this.robot = robot; this.grab = grab;
@@ -1157,7 +1205,7 @@
         }
       }
 
-      /* ─────────── AI ─────────── */
+      /* ───── AI ───── */
       class AISystem {
         constructor(robot, weaponSys, audio) {
           this.robot = robot; this.weaponSys = weaponSys; this.audio = audio;
@@ -1245,8 +1293,13 @@
           this.walkCycle(h);
           const dir = to.normalize();
           const torso = h.limbs.get('torso');
-          const imp = dir.multiplyScalar(h.ai.moveSpeed * torso.body.mass() * K.HUMAN_WALK_IMPULSE_K * dt);
-          torso.body.applyImpulse({ x: imp.x, y: 0, z: imp.z }, true);
+          const cur = torso.body.linvel();
+          const mass = torso.body.mass();
+          torso.body.applyImpulse({
+            x: (dir.x * h.ai.moveSpeed - cur.x) * mass * K.HUMAN_WALK_IMPULSE_K * dt,
+            y: 0,
+            z: (dir.z * h.ai.moveSpeed - cur.z) * mass * K.HUMAN_WALK_IMPULSE_K * dt,
+          }, true);
           if (h.morale < K.MORALE_FLEE_THRESHOLD) h.ai.state = 'flee';
         }
         doAttack(h, tp) {
@@ -1293,25 +1346,34 @@
           this.walkCycle(h);
           const dir = to.normalize();
           const torso = h.limbs.get('torso');
-          const imp = dir.multiplyScalar(torso.body.mass() * K.HUMAN_WALK_IMPULSE_K * dt);
-          torso.body.applyImpulse({ x: imp.x, y: 0, z: imp.z }, true);
+          const cur = torso.body.linvel();
+          const mass = torso.body.mass();
+          torso.body.applyImpulse({
+            x: (dir.x * h.ai.moveSpeed - cur.x) * mass * K.HUMAN_WALK_IMPULSE_K * dt,
+            y: 0,
+            z: (dir.z * h.ai.moveSpeed - cur.z) * mass * K.HUMAN_WALK_IMPULSE_K * dt,
+          }, true);
         }
         walkCycle(h) {
-          const phase = h.ai.walkPhase, TAU = Math.PI * 2;
+          const phase = h.ai.walkPhase;
+          const TAU = Math.PI * 2;
           const legs = [{ hip:'hipL', knee:'kneeL', off:0 }, { hip:'hipR', knee:'kneeR', off:0.5 }];
           for (const l of legs) {
-            if (h.joints.get(l.hip)?.broken) continue;
+            const hipJ = h.joints.get(l.hip);
+            const kneeJ = h.joints.get(l.knee);
+            if (!hipJ || hipJ.broken || hipJ.def.type !== 'revolute') continue;
+            if (!kneeJ || kneeJ.broken || kneeJ.def.type !== 'revolute') continue;
             const ph = phase + l.off;
-            const hip = -0.05 - K.HUMAN_HIP_AMP * Math.cos(TAU * ph);
-            const knee = Math.max(0, -K.HUMAN_KNEE_AMP * Math.sin(TAU * ph));
-            this.setMotor(h, l.hip, hip);
-            this.setMotor(h, l.knee, knee);
+            const hipVel = -Math.cos(TAU * ph) * 5;
+            const kneeVel = Math.max(0, -Math.sin(TAU * ph)) * 6;
+            hipJ.joint.configureMotorVelocity(hipVel, K.HUMAN_MOTOR_STIFFNESS, K.HUMAN_MOTOR_DAMPING);
+            kneeJ.joint.configureMotorVelocity(kneeVel, K.HUMAN_MOTOR_STIFFNESS, K.HUMAN_MOTOR_DAMPING);
           }
         }
         idle(h) {
           for (const j of h.joints.values()) {
             if (j.def.type !== 'revolute' || j.broken) continue;
-            j.joint.configureMotorPosition(0, K.HUMAN_MOTOR_STIFFNESS * 0.5, K.HUMAN_MOTOR_DAMPING);
+            j.joint.configureMotorPosition(0, 150, 15);
           }
         }
         setMotor(h, id, angle) {
@@ -1328,15 +1390,14 @@
           const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
           const tilt = new THREE.Vector3().crossVectors(up, new THREE.Vector3(0, 1, 0));
           const av = torso.body.angvel();
-          torso.body.applyTorqueImpulse({
-            x: (tilt.x * K.HUMAN_UPRIGHT_K - av.x * K.HUMAN_UPRIGHT_D) * dt,
-            y: (tilt.y * K.HUMAN_UPRIGHT_K - av.y * K.HUMAN_UPRIGHT_D) * dt,
-            z: (tilt.z * K.HUMAN_UPRIGHT_K - av.z * K.HUMAN_UPRIGHT_D) * dt,
-          }, true);
+          const tx = clamp(tilt.x * K.HUMAN_UPRIGHT_K - av.x * K.HUMAN_UPRIGHT_D, -200, 200);
+          const ty = clamp(tilt.y * K.HUMAN_UPRIGHT_K - av.y * K.HUMAN_UPRIGHT_D, -200, 200);
+          const tz = clamp(tilt.z * K.HUMAN_UPRIGHT_K - av.z * K.HUMAN_UPRIGHT_D, -200, 200);
+          torso.body.applyTorqueImpulse({ x: tx * dt, y: ty * dt, z: tz * dt }, true);
         }
       }
 
-      /* ─────────── WAVE ─────────── */
+      /* ───── WAVE ───── */
       const WAVE_DEFS = [
         { count: 2, weapons: ['bat'] },
         { count: 3, weapons: ['bat', 'pipe'] },
@@ -1418,7 +1479,7 @@
         }
       }
 
-      /* ─────────── CROWD ─────────── */
+      /* ───── CROWD ───── */
       const RING_R = K.ARENA_RADIUS + 3, RING_H = 3.2, ROWS = 3, PER_ROW = 40, TOTAL = ROWS * PER_ROW;
       class Crowd {
         constructor(scene) {
@@ -1464,7 +1525,7 @@
         }
       }
 
-      /* ─────────── ARENA ─────────── */
+      /* ───── ARENA ───── */
       class Arena {
         constructor(engine) {
           this.engine = engine;
@@ -1533,7 +1594,7 @@
         fixedUpdate() {} update() {}
       }
 
-      /* ─────────── HUD ─────────── */
+      /* ───── HUD ───── */
       class HUD {
         constructor(robotHpGetter) {
           this.robotHpGetter = robotHpGetter;
@@ -1630,7 +1691,7 @@
         }
       }
 
-      /* ─────────── ENGINE ─────────── */
+      /* ───── ENGINE ───── */
       class Engine {
         constructor(container) {
           this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -1713,7 +1774,7 @@
         };
       }
 
-      /* ─────────── BOOT ─────────── */
+      /* ───── BOOT ───── */
       const root = document.getElementById('app');
       const engine = new Engine(root);
       engine.world = new RAPIER.World({ x: 0, y: K.GRAVITY, z: 0 });
@@ -1804,7 +1865,6 @@
       engine.start();
       log('игра запущена');
 
-      // Debug
       window.__engine = engine;
       window.__robot = robot;
       window.__grab = grab;
@@ -1815,9 +1875,7 @@
       });
     }
 
-    /* ═══════════════════════════════════════════════════════════
-       MAIN
-       ═══════════════════════════════════════════════════════════ */
+    /* ═════════ MAIN ═════════ */
     (async () => {
       try {
         log('старт загрузки');

@@ -86,7 +86,7 @@ function addCrate(x, z) {
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic().setTranslation(x, s/2, z).setLinearDamping(1.0)
   );
-  world.createCollider(RAPIER.ColliderDesc.cuboid(s/2, s/2, s/2), body);
+  world.createCollider(RAPIER.ColliderDesc.cuboid(s/2, s/2, s/2).setDensity(100), body);
   crates.push({ mesh, body });
   return { mesh, body };
 }
@@ -202,9 +202,9 @@ const STANDING_OFFSETS = {
   shinL:     { x: -0.12, y: -0.775, z: 0 },
   shinR:     { x: 0.12,  y: -0.775, z: 0 },
 };
-const ROOT_Y = 1.0;
-const POSE_KP = 800;
-const POSE_KD = 60;
+const ROOT_Y = 1.05;
+const POSE_KP = 120; // Пропорциональный коэффициент
+const POSE_KD = 22;  // Демпфирование (критическое для kp=120)
 
 // ============================================================
 // ЧЕЛОВЕК (рэгдолл из 11 сегментов)
@@ -236,9 +236,12 @@ function createHuman(spawnPos) {
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(wp.x, wp.y, wp.z)
       .setLinearDamping(0.8)
-      .setAngularDamping(2.5)
+      .setAngularDamping(5.0) // Сильное гашение вращения
       .setCcdEnabled(true);
     const body = world.createRigidBody(bodyDesc);
+    
+    // Задаем плотность, чтобы тела не были невесомыми
+    colliderDesc.setDensity(100); 
     world.createCollider(colliderDesc, body);
 
     mesh.position.copy(wp);
@@ -485,8 +488,9 @@ function releaseGrab(side, throwIt = false) {
   if (!gs.grabbed) return;
   if (throwIt) {
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
-    const imp = 45;
-    gs.grabbed.body.applyImpulse({ x: dir.x * imp, y: dir.y * imp + 8, z: dir.z * imp }, true);
+    const mass = Math.max(gs.grabbed.body.mass(), 0.1);
+    const imp = 15 * mass; // Масштабируем импульс броска
+    gs.grabbed.body.applyImpulse({ x: dir.x * imp, y: dir.y * imp + 3 * mass, z: dir.z * imp }, true);
   }
   gs.grabbed = null;
   gs.strain = 0;
@@ -527,7 +531,6 @@ function updateHumanAI(human, dt, time) {
 
   if (!human.alive) return; // мёртвые — просто рэгдолл
 
-  // Проверка: захвачен ли человек вообще
   let isGrabbed = false;
   for (const side of ['L', 'R']) {
     const g = grabState[side].grabbed;
@@ -545,13 +548,10 @@ function updateHumanAI(human, dt, time) {
 
   if (!isGrabbed) {
     human.facing = Math.atan2(dx, dz);
-
     if (dist > 2.2) {
-      // Идёт к игроку
       const nx = dx / dist, nz = dz / dist;
-      human.targetPos.x += nx * 1.8 * dt;
-      human.targetPos.z += nz * 1.8 * dt;
-      // Клэмп внутри арены
+      human.targetPos.x += nx * 2.0 * dt;
+      human.targetPos.z += nz * 2.0 * dt;
       const r = Math.hypot(human.targetPos.x, human.targetPos.z);
       if (r > ARENA - 2) {
         human.targetPos.x *= (ARENA - 2) / r;
@@ -560,46 +560,45 @@ function updateHumanAI(human, dt, time) {
       walking = true;
     } else {
       human.attackCd -= dt;
-      if (human.attackCd <= 0) { human.attackCd = 1.2; attackNow = true; }
+      if (human.attackCd <= 0) { human.attackCd = 1.5; attackNow = true; }
     }
+  } else {
+    human.targetPos.x = pp.x;
+    human.targetPos.z = pp.z;
+    human.facing = Math.atan2(dx, dz);
   }
 
   const cos = Math.cos(human.facing);
   const sin = Math.sin(human.facing);
-  const bob = walking ? Math.sin(time * 6) * 0.03 : 0;
+  const bob = walking ? Math.sin(time * 8) * 0.03 : 0;
   const rootY = ROOT_Y + bob;
 
-  // Pose-контроллер: каждый сегмент пружиной тянется к своей точке
+  // Pose-контроллер: масса-зависимый
   for (const name in human.segments) {
-    // Пропускаем: захваченный игроком
     let skip = false;
     for (const side of ['L', 'R']) {
       const g = grabState[side].grabbed;
       if (g?.kind === 'human' && g.human === human && g.segmentName === name) { skip = true; break; }
     }
     if (skip) continue;
-    // Пропускаем оторванный (и его детей)
     if (isDetached(human, name)) continue;
 
     const off = STANDING_OFFSETS[name];
     if (!off) continue;
 
     let lx = off.x, lz = off.z;
-
-    // Анимация ходьбы: ноги и руки качаются
     if (walking) {
-      const phase = time * 6;
+      const phase = time * 8;
       const isLeft = name.endsWith('L');
       const isLeg = name.startsWith('thigh') || name.startsWith('shin');
       const isArm = name.startsWith('upperArm') || name.startsWith('forearm');
       if (isLeg || isArm) {
         const sidePhase = isLeft ? 0 : Math.PI;
-        const amp = isLeg ? 0.2 : 0.1;
+        const amp = isLeg ? 0.3 : 0.15;
         lz += Math.sin(phase + sidePhase) * amp;
       }
     }
 
-    // Поворот локального оффсета по facing
     const wx = lx * cos + lz * sin;
     const wz = -lx * sin + lz * cos;
 
@@ -611,19 +610,21 @@ function updateHumanAI(human, dt, time) {
     const body = seg.body;
     const pos = body.translation();
     const vel = body.linvel();
+    
+    const mass = Math.max(body.mass(), 0.1); // Учитываем массу
 
     const fx = (tx - pos.x) * POSE_KP - vel.x * POSE_KD;
     const fy = (ty - pos.y) * POSE_KP - vel.y * POSE_KD;
     const fz = (tz - pos.z) * POSE_KP - vel.z * POSE_KD;
 
-    body.applyImpulse({ x: fx * dt, y: fy * dt, z: fz * dt }, true);
+    // Импульс = масса * ускорение * dt
+    body.applyImpulse({ x: fx * mass * dt, y: fy * mass * dt, z: fz * mass * dt }, true);
 
     // Гасим вращение
     const av = body.angvel();
-    body.applyTorqueImpulse({ x: -av.x * 12 * dt, y: -av.y * 12 * dt, z: -av.z * 12 * dt }, true);
+    body.applyTorqueImpulse({ x: -av.x * mass * 10 * dt, y: -av.y * mass * 10 * dt, z: -av.z * mass * 10 * dt }, true);
   }
 
-  // Атака
   if (attackNow) {
     robotHP -= 10;
     updateHUD();
@@ -633,7 +634,10 @@ function updateHumanAI(human, dt, time) {
     const ay = yawObj.position.y - ap.y;
     const az = yawObj.position.z - ap.z;
     const alen = Math.sqrt(ax*ax + ay*ay + az*az) || 1;
-    arm.applyImpulse({ x: ax/alen*15, y: ay/alen*8, z: az/alen*15 }, true);
+    const armMass = Math.max(arm.mass(), 0.1);
+    
+    // Масштабируем удар по массе
+    arm.applyImpulse({ x: ax/alen * 5 * armMass, y: ay/alen * 5 * armMass, z: az/alen * 5 * armMass }, true);
   }
 }
 
@@ -739,7 +743,7 @@ function animate() {
     const body = gs.grabbed.body;
     const bt = body.translation();
     const vel = body.linvel();
-    const mass = Math.max(body.mass(), 0.05);
+    const mass = Math.max(body.mass(), 0.1); // Масса
 
     targetPos.copy(camWorldPos).addScaledVector(camDir, 1.6);
     const dx = targetPos.x - bt.x;
@@ -747,19 +751,21 @@ function animate() {
     const dz = targetPos.z - bt.z;
     const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
 
-    // Пружина к точке захвата
-    const kGrab = 500, kdGrab = 50;
-    const fx = dx * kGrab * mass - vel.x * kdGrab * mass;
-    const fy = dy * kGrab * mass - vel.y * kdGrab * mass;
-    const fz = dz * kGrab * mass - vel.z * kdGrab * mass;
-    body.applyImpulse({ x: fx * dt, y: fy * dt, z: fz * dt }, true);
+    // Пружина к точке захвата (в ускорениях)
+    const kGrab = 100;
+    const kdGrab = 20;
+    const fx = dx * kGrab - vel.x * kdGrab;
+    const fy = dy * kGrab - vel.y * kdGrab;
+    const fz = dz * kGrab - vel.z * kdGrab;
+    
+    // Применяем как импульс с учетом массы
+    body.applyImpulse({ x: fx * mass * dt, y: fy * mass * dt, z: fz * mass * dt }, true);
 
     // Strain (только для конечностей)
     if (gs.grabbed.kind === 'human') {
       const name = gs.grabbed.segmentName;
       if (name === 'torso' || name === 'pelvis') continue;
 
-      // strain растёт если сегмент не может дотянуться до цели (тянут)
       if (dist > 0.3) gs.strain += dt * 1.8;
       else gs.strain += dt * 0.5;
 
@@ -768,8 +774,8 @@ function animate() {
         const human = gs.grabbed.human;
         const jointName = human.parentJointOf[name];
         if (jointName && !human.joints[jointName].broken) {
-          // Импульс вырывания — конечность отлетает
-          const pushDir = { x: dx/dist * 12, y: dy/dist * 12 + 3, z: dz/dist * 12 };
+          // Импульс вырывания
+          const pushDir = { x: dx/dist * 4 * mass, y: dy/dist * 4 * mass + 1 * mass, z: dz/dist * 4 * mass };
           body.applyImpulse(pushDir, true);
           breakJoint(human, jointName);
         }

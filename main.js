@@ -44,6 +44,7 @@ scene.add(sun);
 // ФИЗИКА
 // ============================================================
 const world = new RAPIER.World({ x: 0, y: -15, z: 0 });
+world.timestep = 1/60; // Явно задаем шаг физики
 
 // ============================================================
 // АРЕНА
@@ -90,9 +91,10 @@ function addCrate(x, z) {
   crates.push({ mesh, body });
   return { mesh, body };
 }
+// Раздвигаем ящики, чтобы люди не спавнились внутри них
 for (let i = 0; i < 8; i++) {
   const a = Math.random() * Math.PI * 2;
-  const r = 8 + Math.random() * 12;
+  const r = 5 + Math.random() * 10; 
   addCrate(Math.cos(a)*r, Math.sin(a)*r);
 }
 
@@ -187,7 +189,7 @@ function updateBlood(dt) {
 }
 
 // ============================================================
-// СТОЙКА (оффсеты относительно rootY)
+// СТОЙКА
 // ============================================================
 const STANDING_OFFSETS = {
   pelvis:    { x: 0,     y: 0,      z: 0 },
@@ -203,11 +205,12 @@ const STANDING_OFFSETS = {
   shinR:     { x: 0.12,  y: -0.775, z: 0 },
 };
 const ROOT_Y = 1.05;
-const POSE_KP = 120; // Пропорциональный коэффициент
-const POSE_KD = 22;  // Демпфирование (критическое для kp=120)
+// Увеличили жесткость пружины, чтобы она держала вес (раньше тело падало)
+const POSE_KP = 400; 
+const POSE_KD = 40;  
 
 // ============================================================
-// ЧЕЛОВЕК (рэгдолл из 11 сегментов)
+// ЧЕЛОВЕК
 // ============================================================
 const humans = [];
 const skinMat = new THREE.MeshStandardMaterial({ color: 0xd4a888, roughness: 0.85 });
@@ -233,14 +236,16 @@ function createHuman(spawnPos) {
       spawnPos.y + localPos.y,
       spawnPos.z + localPos.z
     );
+    
+    // CCD ВЫКЛЮЧЕН НАХУЙ. Из-за него вешался браузер.
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(wp.x, wp.y, wp.z)
       .setLinearDamping(0.8)
-      .setAngularDamping(5.0) // Сильное гашение вращения
-      .setCcdEnabled(true);
+      .setAngularDamping(5.0); 
+
     const body = world.createRigidBody(bodyDesc);
     
-    // Задаем плотность, чтобы тела не были невесомыми
+    // Задаем плотность
     colliderDesc.setDensity(100); 
     world.createCollider(colliderDesc, body);
 
@@ -249,7 +254,7 @@ function createHuman(spawnPos) {
     mesh.receiveShadow = true;
     scene.add(mesh);
 
-    human.segments[name] = { body, mesh, collider: mesh.userData.collider };
+    human.segments[name] = { body, mesh };
     if (parentName && anchors) {
       const jd = RAPIER.JointData.spherical(anchors.self, anchors.parent);
       const joint = world.createImpulseJoint(jd, body, human.segments[parentName].body, true);
@@ -384,6 +389,8 @@ function breakJoint(human, jointName) {
   if (!detached) return;
 
   const t = human.segments[detached].body.translation();
+  if (Number.isNaN(t.x)) return; // Защита от краша
+
   spawnBlood(new THREE.Vector3(t.x, t.y, t.z), 30, 10);
   world.removeImpulseJoint(j.joint, true);
 
@@ -488,8 +495,8 @@ function releaseGrab(side, throwIt = false) {
   if (!gs.grabbed) return;
   if (throwIt) {
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
-    const mass = Math.max(gs.grabbed.body.mass(), 0.1);
-    const imp = 15 * mass; // Масштабируем импульс броска
+    const mass = Math.max(gs.grabbed.body.mass() || 1, 0.1);
+    const imp = 15 * mass; 
     gs.grabbed.body.applyImpulse({ x: dir.x * imp, y: dir.y * imp + 3 * mass, z: dir.z * imp }, true);
   }
   gs.grabbed = null;
@@ -511,10 +518,9 @@ addEventListener('mouseup', e => {
 addEventListener('contextmenu', e => e.preventDefault());
 
 // ============================================================
-// AI: pose-контроллер активного рэгдолла
+// AI
 // ============================================================
 function updateHumanAI(human, dt, time) {
-  // Кровотечение
   if (human.alive) {
     for (const b of human.bleeders) {
       b.time -= dt;
@@ -522,14 +528,14 @@ function updateHumanAI(human, dt, time) {
         const seg = human.segments[b.segName];
         if (seg) {
           const t = seg.body.translation();
-          spawnBlood(new THREE.Vector3(t.x, t.y, t.z), 2, 3);
+          if (!Number.isNaN(t.x)) spawnBlood(new THREE.Vector3(t.x, t.y, t.z), 2, 3);
         }
       }
     }
     human.bleeders = human.bleeders.filter(b => b.time > 0);
   }
 
-  if (!human.alive) return; // мёртвые — просто рэгдолл
+  if (!human.alive) return; 
 
   let isGrabbed = false;
   for (const side of ['L', 'R']) {
@@ -539,9 +545,11 @@ function updateHumanAI(human, dt, time) {
 
   const pelvis = human.segments.pelvis.body;
   const pp = pelvis.translation();
+  if (Number.isNaN(pp.x) || Number.isNaN(pp.y) || Number.isNaN(pp.z)) return;
+
   const dx = yawObj.position.x - pp.x;
   const dz = yawObj.position.z - pp.z;
-  const dist = Math.sqrt(dx*dx + dz*dz);
+  const dist = Math.sqrt(dx*dx + dz*dz) || 0.001;
 
   let walking = false;
   let attackNow = false;
@@ -573,7 +581,6 @@ function updateHumanAI(human, dt, time) {
   const bob = walking ? Math.sin(time * 8) * 0.03 : 0;
   const rootY = ROOT_Y + bob;
 
-  // Pose-контроллер: масса-зависимый
   for (const name in human.segments) {
     let skip = false;
     for (const side of ['L', 'R']) {
@@ -611,18 +618,21 @@ function updateHumanAI(human, dt, time) {
     const pos = body.translation();
     const vel = body.linvel();
     
-    const mass = Math.max(body.mass(), 0.1); // Учитываем массу
+    // Защита от NaN
+    if (Number.isNaN(pos.x) || Number.isNaN(vel.x)) continue;
+
+    const mass = Math.max(body.mass() || 1, 0.1);
 
     const fx = (tx - pos.x) * POSE_KP - vel.x * POSE_KD;
     const fy = (ty - pos.y) * POSE_KP - vel.y * POSE_KD;
     const fz = (tz - pos.z) * POSE_KP - vel.z * POSE_KD;
 
-    // Импульс = масса * ускорение * dt
+    if (Number.isNaN(fx) || Number.isNaN(fy) || Number.isNaN(fz)) continue;
+
     body.applyImpulse({ x: fx * mass * dt, y: fy * mass * dt, z: fz * mass * dt }, true);
 
-    // Гасим вращение
     const av = body.angvel();
-    body.applyTorqueImpulse({ x: -av.x * mass * 10 * dt, y: -av.y * mass * 10 * dt, z: -av.z * mass * 10 * dt }, true);
+    body.applyTorqueImpulse({ x: -av.x * mass * 20 * dt, y: -av.y * mass * 20 * dt, z: -av.z * mass * 20 * dt }, true);
   }
 
   if (attackNow) {
@@ -634,9 +644,8 @@ function updateHumanAI(human, dt, time) {
     const ay = yawObj.position.y - ap.y;
     const az = yawObj.position.z - ap.z;
     const alen = Math.sqrt(ax*ax + ay*ay + az*az) || 1;
-    const armMass = Math.max(arm.mass(), 0.1);
+    const armMass = Math.max(arm.mass() || 1, 0.1);
     
-    // Масштабируем удар по массе
     arm.applyImpulse({ x: ax/alen * 5 * armMass, y: ay/alen * 5 * armMass, z: az/alen * 5 * armMass }, true);
   }
 }
@@ -656,7 +665,8 @@ function startWave() {
   spawnQueue = [];
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
-    const r = 14 + Math.random() * 6;
+    // Спавним дальше от ящиков
+    const r = 20 + Math.random() * 5;
     spawnQueue.push(new THREE.Vector3(Math.cos(a)*r, 0, Math.sin(a)*r));
   }
   spawnTimer = 0;
@@ -731,7 +741,7 @@ function animate() {
     keys['KeyQ'] = false;
   }
 
-  // --- Захват: пружина + strain ---
+  // --- Захват ---
   camera.getWorldPosition(camWorldPos);
   camera.getWorldQuaternion(tmpQ);
   camDir.set(0, 0, -1).applyQuaternion(tmpQ);
@@ -742,8 +752,10 @@ function animate() {
 
     const body = gs.grabbed.body;
     const bt = body.translation();
+    if (Number.isNaN(bt.x)) { gs.grabbed = null; continue; }
+
     const vel = body.linvel();
-    const mass = Math.max(body.mass(), 0.1); // Масса
+    const mass = Math.max(body.mass() || 1, 0.1);
 
     targetPos.copy(camWorldPos).addScaledVector(camDir, 1.6);
     const dx = targetPos.x - bt.x;
@@ -751,17 +763,16 @@ function animate() {
     const dz = targetPos.z - bt.z;
     const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
 
-    // Пружина к точке захвата (в ускорениях)
     const kGrab = 100;
     const kdGrab = 20;
     const fx = dx * kGrab - vel.x * kdGrab;
     const fy = dy * kGrab - vel.y * kdGrab;
     const fz = dz * kGrab - vel.z * kdGrab;
     
-    // Применяем как импульс с учетом массы
-    body.applyImpulse({ x: fx * mass * dt, y: fy * mass * dt, z: fz * mass * dt }, true);
+    if (!Number.isNaN(fx) && !Number.isNaN(fy) && !Number.isNaN(fz)) {
+      body.applyImpulse({ x: fx * mass * dt, y: fy * mass * dt, z: fz * mass * dt }, true);
+    }
 
-    // Strain (только для конечностей)
     if (gs.grabbed.kind === 'human') {
       const name = gs.grabbed.segmentName;
       if (name === 'torso' || name === 'pelvis') continue;
@@ -774,8 +785,8 @@ function animate() {
         const human = gs.grabbed.human;
         const jointName = human.parentJointOf[name];
         if (jointName && !human.joints[jointName].broken) {
-          // Импульс вырывания
-          const pushDir = { x: dx/dist * 4 * mass, y: dy/dist * 4 * mass + 1 * mass, z: dz/dist * 4 * mass };
+          const pushDist = Math.max(dist, 0.01);
+          const pushDir = { x: dx/pushDist * 4 * mass, y: dy/pushDist * 4 * mass + 1 * mass, z: dz/pushDist * 4 * mass };
           body.applyImpulse(pushDir, true);
           breakJoint(human, jointName);
         }
@@ -788,33 +799,36 @@ function animate() {
     }
   }
 
-  // --- AI + синхронизация мешей ---
+  // --- AI + синхронизация ---
   for (const h of humans) {
     updateHumanAI(h, dt, now);
     for (const name in h.segments) {
       const seg = h.segments[name];
       const t = seg.body.translation();
       const r = seg.body.rotation();
-      seg.mesh.position.set(t.x, t.y, t.z);
-      seg.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+      if (!Number.isNaN(t.x)) {
+        seg.mesh.position.set(t.x, t.y, t.z);
+        seg.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+      }
     }
   }
 
   for (const c of crates) {
     const t = c.body.translation();
     const r = c.body.rotation();
-    c.mesh.position.set(t.x, t.y, t.z);
-    c.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    if (!Number.isNaN(t.x)) {
+      c.mesh.position.set(t.x, t.y, t.z);
+      c.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    }
   }
 
-  // --- Спавн ---
+  // --- Волны ---
   spawnTimer += dt;
   if (spawnQueue.length > 0 && spawnTimer > 0.6) {
     spawnTimer = 0;
     createHuman(spawnQueue.shift());
   }
 
-  // --- Проверка зачистки волны ---
   if (nextWaveCooldown > 0) {
     nextWaveCooldown -= dt;
     if (nextWaveCooldown <= 0) startWave();

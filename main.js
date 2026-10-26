@@ -19,7 +19,6 @@ document.body.appendChild(renderer.domElement);
 
 const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 200);
 
-// FPS-риг
 const yawObj = new THREE.Object3D();
 const pitchObj = new THREE.Object3D();
 pitchObj.position.y = 1.7;
@@ -33,7 +32,6 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
-// Свет
 scene.add(new THREE.HemisphereLight(0xfff5e0, 0x1a2a3a, 0.75));
 const sun = new THREE.DirectionalLight(0xffeedd, 1.6);
 sun.position.set(15, 30, 12);
@@ -45,7 +43,7 @@ scene.add(sun);
 // ============================================================
 // ФИЗИКА
 // ============================================================
-const world = new RAPIER.World({ x: 0, y: -20, z: 0 });
+const world = new RAPIER.World({ x: 0, y: -15, z: 0 });
 
 // ============================================================
 // АРЕНА
@@ -77,7 +75,7 @@ addWall(ARENA*2, 5, 1, 0, 2.5,  ARENA);
 addWall(1, 5, ARENA*2, -ARENA, 2.5, 0);
 addWall(1, 5, ARENA*2,  ARENA, 2.5, 0);
 
-// Пара ящиков-декораций
+const crates = [];
 function addCrate(x, z) {
   const s = 1 + Math.random() * 0.4;
   const mat = new THREE.MeshStandardMaterial({ color: 0x5a4a2a, roughness: 0.9 });
@@ -86,20 +84,20 @@ function addCrate(x, z) {
   mesh.castShadow = mesh.receiveShadow = true;
   scene.add(mesh);
   const body = world.createRigidBody(
-    RAPIER.RigidBodyDesc.dynamic().setTranslation(x, s/2, z)
+    RAPIER.RigidBodyDesc.dynamic().setTranslation(x, s/2, z).setLinearDamping(1.0)
   );
   world.createCollider(RAPIER.ColliderDesc.cuboid(s/2, s/2, s/2), body);
+  crates.push({ mesh, body });
   return { mesh, body };
 }
-const crates = [];
 for (let i = 0; i < 8; i++) {
   const a = Math.random() * Math.PI * 2;
   const r = 8 + Math.random() * 12;
-  crates.push(addCrate(Math.cos(a)*r, Math.sin(a)*r));
+  addCrate(Math.cos(a)*r, Math.sin(a)*r);
 }
 
 // ============================================================
-// КЛЕШНИ (вид от первого лица)
+// КЛЕШНИ
 // ============================================================
 function makeClaw(side) {
   const g = new THREE.Group();
@@ -144,7 +142,7 @@ bPositions.fill(-9999);
 
 const bGeo = new THREE.BufferGeometry();
 bGeo.setAttribute('position', new THREE.BufferAttribute(bPositions, 3));
-const bMat = new THREE.PointsMaterial({ color: 0x990000, size: 0.09, sizeAttenuation: true });
+const bMat = new THREE.PointsMaterial({ color: 0x990000, size: 0.09 });
 const bloodPoints = new THREE.Points(bGeo, bMat);
 bloodPoints.frustumCulled = false;
 scene.add(bloodPoints);
@@ -175,7 +173,6 @@ function updateBlood(dt) {
       bPositions[i*3+1] += bVelocities[i*3+1] * dt;
       bPositions[i*3+2] += bVelocities[i*3+2] * dt;
       bVelocities[i*3+1] -= 25 * dt;
-      // трение о пол
       if (bPositions[i*3+1] < 0.05) {
         bPositions[i*3+1] = 0.05;
         bVelocities[i*3+1] *= -0.2;
@@ -190,11 +187,29 @@ function updateBlood(dt) {
 }
 
 // ============================================================
-// ФАБРИКА ЛЮДЕЙ (рэгдолл из 11 сегментов)
+// СТОЙКА (оффсеты относительно rootY)
+// ============================================================
+const STANDING_OFFSETS = {
+  pelvis:    { x: 0,     y: 0,      z: 0 },
+  torso:     { x: 0,     y: 0.35,   z: 0 },
+  head:      { x: 0,     y: 0.75,   z: 0 },
+  upperArmL: { x: -0.28, y: 0.345,  z: 0 },
+  upperArmR: { x: 0.28,  y: 0.345,  z: 0 },
+  forearmL:  { x: -0.28, y: -0.005, z: 0 },
+  forearmR:  { x: 0.28,  y: -0.005, z: 0 },
+  thighL:    { x: -0.12, y: -0.325, z: 0 },
+  thighR:    { x: 0.12,  y: -0.325, z: 0 },
+  shinL:     { x: -0.12, y: -0.775, z: 0 },
+  shinR:     { x: 0.12,  y: -0.775, z: 0 },
+};
+const ROOT_Y = 1.0;
+const POSE_KP = 800;
+const POSE_KD = 60;
+
+// ============================================================
+// ЧЕЛОВЕК (рэгдолл из 11 сегментов)
 // ============================================================
 const humans = [];
-const colliderToHuman = new Map(); // collider.handle -> {human, segmentName}
-
 const skinMat = new THREE.MeshStandardMaterial({ color: 0xd4a888, roughness: 0.85 });
 
 function createHuman(spawnPos) {
@@ -206,9 +221,10 @@ function createHuman(spawnPos) {
     alive: true,
     limbsLost: 0,
     headless: false,
-    state: 'APPROACH',
     attackCd: 1.5,
     bleeders: [],
+    targetPos: new THREE.Vector3(spawnPos.x, 0, spawnPos.z),
+    facing: 0,
   };
 
   function addSegment(name, localPos, colliderDesc, mesh, parentName = null, anchors = null) {
@@ -219,38 +235,34 @@ function createHuman(spawnPos) {
     );
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(wp.x, wp.y, wp.z)
-      .setLinearDamping(0.6)
-      .setAngularDamping(0.7);
+      .setLinearDamping(0.8)
+      .setAngularDamping(2.5)
+      .setCcdEnabled(true);
     const body = world.createRigidBody(bodyDesc);
-    const collider = world.createCollider(colliderDesc, body);
+    world.createCollider(colliderDesc, body);
 
     mesh.position.copy(wp);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     scene.add(mesh);
 
-    human.segments[name] = { body, mesh, collider };
-    colliderToHuman.set(collider.handle, { human, segmentName: name });
-
+    human.segments[name] = { body, mesh, collider: mesh.userData.collider };
     if (parentName && anchors) {
       const jd = RAPIER.JointData.spherical(anchors.self, anchors.parent);
       const joint = world.createImpulseJoint(jd, body, human.segments[parentName].body, true);
       const jName = 'j_' + name;
-      human.joints[jName] = { joint, bodyA: body, bodyB: human.segments[parentName].body, broken: false };
+      human.joints[jName] = { joint, broken: false };
       human.parentSegmentOf[name] = parentName;
       human.parentJointOf[name] = jName;
     }
     return human.segments[name];
   }
 
-  // ---- Пельвис (корень) ----
   addSegment('pelvis',
     { x: 0, y: 1.08, z: 0 },
     RAPIER.ColliderDesc.cuboid(0.175, 0.1, 0.11),
     new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.2, 0.22), skinMat)
   );
-
-  // ---- Торс ----
   addSegment('torso',
     { x: 0, y: 1.43, z: 0 },
     RAPIER.ColliderDesc.cuboid(0.2, 0.25, 0.125),
@@ -259,7 +271,6 @@ function createHuman(spawnPos) {
     { self: { x: 0, y: -0.25, z: 0 }, parent: { x: 0, y: 0.1, z: 0 } }
   );
 
-  // ---- Голова ----
   const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 16), skinMat);
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   const pupilMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
@@ -281,7 +292,6 @@ function createHuman(spawnPos) {
     { self: { x: 0, y: -0.15, z: 0 }, parent: { x: 0, y: 0.25, z: 0 } }
   );
 
-  // ---- Руки ----
   for (const side of [-1, 1]) {
     const s = side < 0 ? 'L' : 'R';
     const armX = side * 0.28;
@@ -301,7 +311,6 @@ function createHuman(spawnPos) {
     );
   }
 
-  // ---- Ноги ----
   for (const side of [-1, 1]) {
     const s = side < 0 ? 'L' : 'R';
     const legX = side * 0.12;
@@ -365,16 +374,14 @@ function breakJoint(human, jointName) {
   if (!j || j.broken) return;
   j.broken = true;
 
-  // Кто отделился?
   let detached = null;
   for (const segName in human.parentJointOf) {
     if (human.parentJointOf[segName] === jointName) { detached = segName; break; }
   }
   if (!detached) return;
 
-  const t = j.bodyA.translation();
+  const t = human.segments[detached].body.translation();
   spawnBlood(new THREE.Vector3(t.x, t.y, t.z), 30, 10);
-
   world.removeImpulseJoint(j.joint, true);
 
   if (detached === 'head') {
@@ -393,6 +400,16 @@ function breakJoint(human, jointName) {
       updateHUD();
     }
   }
+}
+
+function isDetached(human, name) {
+  let cur = name;
+  while (human.parentSegmentOf[cur]) {
+    const jn = human.parentJointOf[cur];
+    if (human.joints[jn]?.broken) return true;
+    cur = human.parentSegmentOf[cur];
+  }
+  return false;
 }
 
 // ============================================================
@@ -437,41 +454,25 @@ function tryGrab(side) {
 
   raycaster.setFromCamera({ x: 0, y: 0 }, camera);
   const meshes = [];
-  for (const h of humans) {
-    for (const name in h.segments) meshes.push(h.segments[name].mesh);
-  }
+  for (const h of humans) for (const name in h.segments) meshes.push(h.segments[name].mesh);
   for (const c of crates) meshes.push(c.mesh);
 
   const hits = raycaster.intersectObjects(meshes, false);
   if (hits.length === 0) return;
-
   const hit = hits[0];
-  const mesh = hit.object;
 
-  // Ищем к чему относится
-  let found = null;
   for (const h of humans) {
     for (const name in h.segments) {
-      if (h.segments[name].mesh === mesh) { found = { human: h, segmentName: name }; break; }
+      if (h.segments[name].mesh === hit.object) {
+        gs.grabbed = { kind: 'human', human: h, segmentName: name, body: h.segments[name].body };
+        setClawClosed(side === 'L' ? clawL : clawR, true);
+        document.getElementById('crosshair').classList.add('grab');
+        return;
+      }
     }
-    if (found) break;
   }
-
-  if (found) {
-    gs.grabbed = {
-      kind: 'human',
-      human: found.human,
-      segmentName: found.segmentName,
-      body: found.human.segments[found.segmentName].body,
-    };
-    setClawClosed(side === 'L' ? clawL : clawR, true);
-    document.getElementById('crosshair').classList.add('grab');
-    return;
-  }
-
-  // Ящик
   for (const c of crates) {
-    if (c.mesh === mesh) {
+    if (c.mesh === hit.object) {
       gs.grabbed = { kind: 'crate', body: c.body, mesh: c.mesh };
       setClawClosed(side === 'L' ? clawL : clawR, true);
       return;
@@ -482,21 +483,16 @@ function tryGrab(side) {
 function releaseGrab(side, throwIt = false) {
   const gs = grabState[side];
   if (!gs.grabbed) return;
-
   if (throwIt) {
     const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
     const imp = 45;
-    gs.grabbed.body.applyImpulse(
-      { x: dir.x * imp, y: dir.y * imp + 8, z: dir.z * imp },
-      true
-    );
+    gs.grabbed.body.applyImpulse({ x: dir.x * imp, y: dir.y * imp + 8, z: dir.z * imp }, true);
   }
   gs.grabbed = null;
   gs.strain = 0;
   setClawClosed(side === 'L' ? clawL : clawR, false);
-  if (!grabState.L.grabbed && !grabState.R.grabbed) {
+  if (!grabState.L.grabbed && !grabState.R.grabbed)
     document.getElementById('crosshair').classList.remove('grab');
-  }
 }
 
 addEventListener('mousedown', e => {
@@ -511,9 +507,9 @@ addEventListener('mouseup', e => {
 addEventListener('contextmenu', e => e.preventDefault());
 
 // ============================================================
-// AI
+// AI: pose-контроллер активного рэгдолла
 // ============================================================
-function updateHuman(human, dt) {
+function updateHumanAI(human, dt, time) {
   // Кровотечение
   if (human.alive) {
     for (const b of human.bleeders) {
@@ -529,7 +525,14 @@ function updateHuman(human, dt) {
     human.bleeders = human.bleeders.filter(b => b.time > 0);
   }
 
-  if (!human.alive || human.headless) return;
+  if (!human.alive) return; // мёртвые — просто рэгдолл
+
+  // Проверка: захвачен ли человек вообще
+  let isGrabbed = false;
+  for (const side of ['L', 'R']) {
+    const g = grabState[side].grabbed;
+    if (g?.kind === 'human' && g.human === human) { isGrabbed = true; break; }
+  }
 
   const pelvis = human.segments.pelvis.body;
   const pp = pelvis.translation();
@@ -537,25 +540,100 @@ function updateHuman(human, dt) {
   const dz = yawObj.position.z - pp.z;
   const dist = Math.sqrt(dx*dx + dz*dz);
 
-  if (dist > 1.8) {
-    const nx = dx / dist, nz = dz / dist;
-    pelvis.applyImpulse({ x: nx * 6, y: 0, z: nz * 6 }, true);
-    // Попытка «привстать» если упал
-    const torso = human.segments.torso.body;
-    const tp = torso.translation();
-    if (tp.y < 1.1 && human.limbsLost < 2) {
-      torso.applyImpulse({ x: 0, y: 6, z: 0 }, true);
+  let walking = false;
+  let attackNow = false;
+
+  if (!isGrabbed) {
+    human.facing = Math.atan2(dx, dz);
+
+    if (dist > 2.2) {
+      // Идёт к игроку
+      const nx = dx / dist, nz = dz / dist;
+      human.targetPos.x += nx * 1.8 * dt;
+      human.targetPos.z += nz * 1.8 * dt;
+      // Клэмп внутри арены
+      const r = Math.hypot(human.targetPos.x, human.targetPos.z);
+      if (r > ARENA - 2) {
+        human.targetPos.x *= (ARENA - 2) / r;
+        human.targetPos.z *= (ARENA - 2) / r;
+      }
+      walking = true;
+    } else {
+      human.attackCd -= dt;
+      if (human.attackCd <= 0) { human.attackCd = 1.2; attackNow = true; }
     }
-  } else {
-    human.attackCd -= dt;
-    if (human.attackCd <= 0) {
-      human.attackCd = 1.4;
-      robotHP -= 12;
-      updateHUD();
-      const torso = human.segments.torso.body;
-      const tp = torso.translation();
-      torso.applyImpulse({ x: dx * 3, y: 3, z: dz * 3 }, true);
+  }
+
+  const cos = Math.cos(human.facing);
+  const sin = Math.sin(human.facing);
+  const bob = walking ? Math.sin(time * 6) * 0.03 : 0;
+  const rootY = ROOT_Y + bob;
+
+  // Pose-контроллер: каждый сегмент пружиной тянется к своей точке
+  for (const name in human.segments) {
+    // Пропускаем: захваченный игроком
+    let skip = false;
+    for (const side of ['L', 'R']) {
+      const g = grabState[side].grabbed;
+      if (g?.kind === 'human' && g.human === human && g.segmentName === name) { skip = true; break; }
     }
+    if (skip) continue;
+    // Пропускаем оторванный (и его детей)
+    if (isDetached(human, name)) continue;
+
+    const off = STANDING_OFFSETS[name];
+    if (!off) continue;
+
+    let lx = off.x, lz = off.z;
+
+    // Анимация ходьбы: ноги и руки качаются
+    if (walking) {
+      const phase = time * 6;
+      const isLeft = name.endsWith('L');
+      const isLeg = name.startsWith('thigh') || name.startsWith('shin');
+      const isArm = name.startsWith('upperArm') || name.startsWith('forearm');
+      if (isLeg || isArm) {
+        const sidePhase = isLeft ? 0 : Math.PI;
+        const amp = isLeg ? 0.2 : 0.1;
+        lz += Math.sin(phase + sidePhase) * amp;
+      }
+    }
+
+    // Поворот локального оффсета по facing
+    const wx = lx * cos + lz * sin;
+    const wz = -lx * sin + lz * cos;
+
+    const tx = human.targetPos.x + wx;
+    const ty = rootY + off.y;
+    const tz = human.targetPos.z + wz;
+
+    const seg = human.segments[name];
+    const body = seg.body;
+    const pos = body.translation();
+    const vel = body.linvel();
+
+    const fx = (tx - pos.x) * POSE_KP - vel.x * POSE_KD;
+    const fy = (ty - pos.y) * POSE_KP - vel.y * POSE_KD;
+    const fz = (tz - pos.z) * POSE_KP - vel.z * POSE_KD;
+
+    body.applyImpulse({ x: fx * dt, y: fy * dt, z: fz * dt }, true);
+
+    // Гасим вращение
+    const av = body.angvel();
+    body.applyTorqueImpulse({ x: -av.x * 12 * dt, y: -av.y * 12 * dt, z: -av.z * 12 * dt }, true);
+  }
+
+  // Атака
+  if (attackNow) {
+    robotHP -= 10;
+    updateHUD();
+    const arm = human.segments.upperArmR.body;
+    const ap = arm.translation();
+    const ax = yawObj.position.x - ap.x;
+    const ay = yawObj.position.y - ap.y;
+    const az = yawObj.position.z - ap.z;
+    const alen = Math.sqrt(ax*ax + ay*ay + az*az) || 1;
+    arm.applyImpulse({ x: ax/alen*15, y: ay/alen*8, z: az/alen*15 }, true);
   }
 }
 
@@ -565,11 +643,12 @@ function updateHuman(human, dt) {
 let wave = 0;
 let spawnQueue = [];
 let spawnTimer = 0;
+let nextWaveCooldown = 0;
 
 function startWave() {
   wave++;
   document.getElementById('wave').textContent = wave;
-  const count = Math.min(3 + wave, 10);
+  const count = Math.min(3 + wave, 8);
   spawnQueue = [];
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
@@ -601,22 +680,23 @@ updateHUD();
 startWave();
 
 const tmpQ = new THREE.Quaternion();
+const camWorldPos = new THREE.Vector3();
+const camDir = new THREE.Vector3();
+const targetPos = new THREE.Vector3();
 
 function animate() {
   requestAnimationFrame(animate);
-
   const now = performance.now() / 1000;
-  let dt = Math.min(now - lastTime, 0.1);
+  const dt = Math.min(now - lastTime, 0.1);
   lastTime = now;
   acc += dt;
 
-  // --- Физика фикс. шагом ---
   while (acc >= FIXED_DT) {
     world.step();
     acc -= FIXED_DT;
   }
 
-  // --- Движение игрока ---
+  // --- Игрок ---
   if (pointerLocked) {
     const speed = 6;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(yawObj.quaternion);
@@ -631,8 +711,7 @@ function animate() {
     if (move.lengthSq() > 0) {
       move.normalize().multiplyScalar(speed * dt);
       yawObj.position.add(move);
-      // Ограничение арены
-      const r = Math.sqrt(yawObj.position.x ** 2 + yawObj.position.z ** 2);
+      const r = Math.hypot(yawObj.position.x, yawObj.position.z);
       if (r > ARENA - 1.5) {
         const k = (ARENA - 1.5) / r;
         yawObj.position.x *= k;
@@ -648,60 +727,64 @@ function animate() {
     keys['KeyQ'] = false;
   }
 
-  // --- Захват: физика и разрыв ---
-  const camWorldPos = new THREE.Vector3();
+  // --- Захват: пружина + strain ---
   camera.getWorldPosition(camWorldPos);
-  const camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.getWorldQuaternion(tmpQ));
+  camera.getWorldQuaternion(tmpQ);
+  camDir.set(0, 0, -1).applyQuaternion(tmpQ);
 
   for (const side of ['L', 'R']) {
     const gs = grabState[side];
     if (!gs.grabbed) continue;
 
-    const targetPos = camWorldPos.clone().add(camDir.clone().multiplyScalar(1.6));
-    const bt = gs.grabbed.body.translation();
+    const body = gs.grabbed.body;
+    const bt = body.translation();
+    const vel = body.linvel();
+    const mass = Math.max(body.mass(), 0.05);
+
+    targetPos.copy(camWorldPos).addScaledVector(camDir, 1.6);
     const dx = targetPos.x - bt.x;
     const dy = targetPos.y - bt.y;
     const dz = targetPos.z - bt.z;
     const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
 
-    // P-контроллер (мягкий)
-    const k = 12;
-    const maxImp = 25;
-    let ix = dx * k, iy = dy * k, iz = dz * k;
-    const mag = Math.sqrt(ix*ix + iy*iy + iz*iz);
-    if (mag > maxImp) { const s = maxImp / mag; ix *= s; iy *= s; iz *= s; }
-    gs.grabbed.body.applyImpulse({ x: ix, y: iy, z: iz }, true);
+    // Пружина к точке захвата
+    const kGrab = 500, kdGrab = 50;
+    const fx = dx * kGrab * mass - vel.x * kdGrab * mass;
+    const fy = dy * kGrab * mass - vel.y * kdGrab * mass;
+    const fz = dz * kGrab * mass - vel.z * kdGrab * mass;
+    body.applyImpulse({ x: fx * dt, y: fy * dt, z: fz * dt }, true);
 
-    // Разрыв (только для конечностей, не для торса/пельвиса/ящиков)
+    // Strain (только для конечностей)
     if (gs.grabbed.kind === 'human') {
       const name = gs.grabbed.segmentName;
-      const isCore = (name === 'torso' || name === 'pelvis');
-      if (!isCore) {
-        gs.strain += dt * (1 + Math.min(dist, 2));
-        const breakTime = name === 'head' ? 0.7 : 1.2;
-        if (gs.strain > breakTime) {
-          const human = gs.grabbed.human;
-          const jointName = human.parentJointOf[name];
-          if (jointName && !human.joints[jointName].broken) {
-            breakJoint(human, jointName);
-            gs.grabbed = null;
-            gs.strain = 0;
-            setClawClosed(side === 'L' ? clawL : clawR, false);
-            if (!grabState.L.grabbed && !grabState.R.grabbed) {
-              document.getElementById('crosshair').classList.remove('grab');
-            }
-          } else {
-            // Уже оторван — просто держим
-            gs.strain = 0;
-          }
+      if (name === 'torso' || name === 'pelvis') continue;
+
+      // strain растёт если сегмент не может дотянуться до цели (тянут)
+      if (dist > 0.3) gs.strain += dt * 1.8;
+      else gs.strain += dt * 0.5;
+
+      const breakTime = name === 'head' ? 0.5 : 1.4;
+      if (gs.strain > breakTime) {
+        const human = gs.grabbed.human;
+        const jointName = human.parentJointOf[name];
+        if (jointName && !human.joints[jointName].broken) {
+          // Импульс вырывания — конечность отлетает
+          const pushDir = { x: dx/dist * 12, y: dy/dist * 12 + 3, z: dz/dist * 12 };
+          body.applyImpulse(pushDir, true);
+          breakJoint(human, jointName);
         }
+        gs.grabbed = null;
+        gs.strain = 0;
+        setClawClosed(side === 'L' ? clawL : clawR, false);
+        if (!grabState.L.grabbed && !grabState.R.grabbed)
+          document.getElementById('crosshair').classList.remove('grab');
       }
     }
   }
 
   // --- AI + синхронизация мешей ---
   for (const h of humans) {
-    updateHuman(h, dt);
+    updateHumanAI(h, dt, now);
     for (const name in h.segments) {
       const seg = h.segments[name];
       const t = seg.body.translation();
@@ -711,7 +794,6 @@ function animate() {
     }
   }
 
-  // Синхронизация ящиков
   for (const c of crates) {
     const t = c.body.translation();
     const r = c.body.rotation();
@@ -719,29 +801,27 @@ function animate() {
     c.mesh.quaternion.set(r.x, r.y, r.z, r.w);
   }
 
-  // --- Спавн волны ---
+  // --- Спавн ---
   spawnTimer += dt;
   if (spawnQueue.length > 0 && spawnTimer > 0.6) {
     spawnTimer = 0;
-    const pos = spawnQueue.shift();
-    createHuman(pos);
+    createHuman(spawnQueue.shift());
   }
-  if (spawnQueue.length === 0 && humans.every(h => !h.alive)) {
-    // Волна зачищена — но не сразу (проверка на то, что всё уже создалось)
-    if (humans.length > 0 && wave * 3 <= humans.filter(h => !h.alive).length + killCount) {
-      // Небольшая задержка перед следующей волной
-      if (spawnTimer > 2.5) {
-        spawnTimer = -10; // cooldown
-        showMsg('ВОЛНА ЗАЧИЩЕНА', '#0f0');
-        setTimeout(() => startWave(), 2500);
-      }
+
+  // --- Проверка зачистки волны ---
+  if (nextWaveCooldown > 0) {
+    nextWaveCooldown -= dt;
+    if (nextWaveCooldown <= 0) startWave();
+  } else if (spawnQueue.length === 0 && humans.length > 0) {
+    const allDead = humans.every(h => !h.alive);
+    if (allDead) {
+      showMsg('ВОЛНА ЗАЧИЩЕНА', '#0f0');
+      nextWaveCooldown = 3.0;
     }
   }
 
-  // --- Кровь ---
   updateBlood(dt);
 
-  // --- HP и смерть робота ---
   if (robotHP <= 0) {
     robotHP = 100;
     updateHUD();

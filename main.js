@@ -1,6 +1,18 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 
+// Показываем ошибки прямо в игре
+window.onerror = function(msg) {
+  const el = document.getElementById('msg');
+  if (el) {
+    el.textContent = 'ERROR: ' + msg;
+    el.style.color = 'red';
+    el.style.opacity = 1;
+    el.style.fontSize = '16px';
+  }
+  return false;
+};
+
 await RAPIER.init();
 
 // ============================================================
@@ -44,7 +56,6 @@ scene.add(sun);
 // ФИЗИКА
 // ============================================================
 const world = new RAPIER.World({ x: 0, y: -15, z: 0 });
-world.timestep = 1/60; // Явно задаем шаг физики
 
 // ============================================================
 // АРЕНА
@@ -91,7 +102,6 @@ function addCrate(x, z) {
   crates.push({ mesh, body });
   return { mesh, body };
 }
-// Раздвигаем ящики, чтобы люди не спавнились внутри них
 for (let i = 0; i < 8; i++) {
   const a = Math.random() * Math.PI * 2;
   const r = 5 + Math.random() * 10; 
@@ -205,7 +215,6 @@ const STANDING_OFFSETS = {
   shinR:     { x: 0.12,  y: -0.775, z: 0 },
 };
 const ROOT_Y = 1.05;
-// Увеличили жесткость пружины, чтобы она держала вес (раньше тело падало)
 const POSE_KP = 400; 
 const POSE_KD = 40;  
 
@@ -237,7 +246,6 @@ function createHuman(spawnPos) {
       spawnPos.z + localPos.z
     );
     
-    // CCD ВЫКЛЮЧЕН НАХУЙ. Из-за него вешался браузер.
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(wp.x, wp.y, wp.z)
       .setLinearDamping(0.8)
@@ -245,7 +253,6 @@ function createHuman(spawnPos) {
 
     const body = world.createRigidBody(bodyDesc);
     
-    // Задаем плотность
     colliderDesc.setDensity(100); 
     world.createCollider(colliderDesc, body);
 
@@ -255,8 +262,13 @@ function createHuman(spawnPos) {
     scene.add(mesh);
 
     human.segments[name] = { body, mesh };
+    
     if (parentName && anchors) {
-      const jd = RAPIER.JointData.spherical(anchors.self, anchors.parent);
+      // ИСПОЛЬЗУЕМ RAPIER.Vector3 ВМЕСТО ОБЫЧНЫХ ОБЪЕКТОВ
+      const jd = RAPIER.JointData.spherical(
+        new RAPIER.Vector3(anchors.self.x, anchors.self.y, anchors.self.z),
+        new RAPIER.Vector3(anchors.parent.x, anchors.parent.y, anchors.parent.z)
+      );
       const joint = world.createImpulseJoint(jd, body, human.segments[parentName].body, true);
       const jName = 'j_' + name;
       human.joints[jName] = { joint, broken: false };
@@ -389,7 +401,7 @@ function breakJoint(human, jointName) {
   if (!detached) return;
 
   const t = human.segments[detached].body.translation();
-  if (Number.isNaN(t.x)) return; // Защита от краша
+  if (Number.isNaN(t.x)) return; 
 
   spawnBlood(new THREE.Vector3(t.x, t.y, t.z), 30, 10);
   world.removeImpulseJoint(j.joint, true);
@@ -430,17 +442,23 @@ addEventListener('keydown', e => { keys[e.code] = true; });
 addEventListener('keyup',   e => { keys[e.code] = false; });
 
 let pointerLocked = false;
-document.getElementById('menu').addEventListener('click', () => {
-  document.getElementById('menu').style.display = 'none';
-  renderer.domElement.requestPointerLock();
+const menuEl = document.getElementById('menu');
+
+// ВАЖНО: Запрашиваем pointer lock на document.body
+menuEl.addEventListener('click', () => {
+  document.body.requestPointerLock();
 });
+
 document.addEventListener('pointerlockchange', () => {
-  pointerLocked = document.pointerLockElement === renderer.domElement;
-  if (!pointerLocked) {
-    document.getElementById('menu').style.display = 'flex';
-    document.getElementById('menu').querySelector('p').textContent = 'Пауза — кликни, чтобы продолжить';
+  pointerLocked = document.pointerLockElement === document.body;
+  if (pointerLocked) {
+    menuEl.style.display = 'none'; // Скрываем меню ТОЛЬКО если захват удался
+  } else {
+    menuEl.style.display = 'flex';
+    menuEl.querySelector('p').textContent = 'Пауза — кликни, чтобы продолжить';
   }
 });
+
 addEventListener('mousemove', e => {
   if (!pointerLocked) return;
   yawObj.rotation.y -= e.movementX * 0.0022;
@@ -618,7 +636,6 @@ function updateHumanAI(human, dt, time) {
     const pos = body.translation();
     const vel = body.linvel();
     
-    // Защита от NaN
     if (Number.isNaN(pos.x) || Number.isNaN(vel.x)) continue;
 
     const mass = Math.max(body.mass() || 1, 0.1);
@@ -665,7 +682,6 @@ function startWave() {
   spawnQueue = [];
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
-    // Спавним дальше от ящиков
     const r = 20 + Math.random() * 5;
     spawnQueue.push(new THREE.Vector3(Math.cos(a)*r, 0, Math.sin(a)*r));
   }
@@ -676,6 +692,7 @@ function startWave() {
 let msgTimeout = null;
 function showMsg(text, color = '#fff') {
   const el = document.getElementById('msg');
+  if (!el) return;
   el.textContent = text;
   el.style.color = color;
   el.style.opacity = 1;
@@ -700,152 +717,164 @@ const targetPos = new THREE.Vector3();
 
 function animate() {
   requestAnimationFrame(animate);
-  const now = performance.now() / 1000;
-  const dt = Math.min(now - lastTime, 0.1);
-  lastTime = now;
-  acc += dt;
+  
+  try {
+    const now = performance.now() / 1000;
+    const dt = Math.min(now - lastTime, 0.1);
+    lastTime = now;
+    acc += dt;
 
-  while (acc >= FIXED_DT) {
-    world.step();
-    acc -= FIXED_DT;
-  }
-
-  // --- Игрок ---
-  if (pointerLocked) {
-    const speed = 6;
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(yawObj.quaternion);
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(yawObj.quaternion);
-    fwd.y = 0; fwd.normalize();
-    right.y = 0; right.normalize();
-    const move = new THREE.Vector3();
-    if (keys['KeyW']) move.add(fwd);
-    if (keys['KeyS']) move.sub(fwd);
-    if (keys['KeyD']) move.add(right);
-    if (keys['KeyA']) move.sub(right);
-    if (move.lengthSq() > 0) {
-      move.normalize().multiplyScalar(speed * dt);
-      yawObj.position.add(move);
-      const r = Math.hypot(yawObj.position.x, yawObj.position.z);
-      if (r > ARENA - 1.5) {
-        const k = (ARENA - 1.5) / r;
-        yawObj.position.x *= k;
-        yawObj.position.z *= k;
-      }
-    }
-  }
-
-  // --- Q = бросить ---
-  if (keys['KeyQ']) {
-    if (grabState.L.grabbed) releaseGrab('L', true);
-    else if (grabState.R.grabbed) releaseGrab('R', true);
-    keys['KeyQ'] = false;
-  }
-
-  // --- Захват ---
-  camera.getWorldPosition(camWorldPos);
-  camera.getWorldQuaternion(tmpQ);
-  camDir.set(0, 0, -1).applyQuaternion(tmpQ);
-
-  for (const side of ['L', 'R']) {
-    const gs = grabState[side];
-    if (!gs.grabbed) continue;
-
-    const body = gs.grabbed.body;
-    const bt = body.translation();
-    if (Number.isNaN(bt.x)) { gs.grabbed = null; continue; }
-
-    const vel = body.linvel();
-    const mass = Math.max(body.mass() || 1, 0.1);
-
-    targetPos.copy(camWorldPos).addScaledVector(camDir, 1.6);
-    const dx = targetPos.x - bt.x;
-    const dy = targetPos.y - bt.y;
-    const dz = targetPos.z - bt.z;
-    const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-
-    const kGrab = 100;
-    const kdGrab = 20;
-    const fx = dx * kGrab - vel.x * kdGrab;
-    const fy = dy * kGrab - vel.y * kdGrab;
-    const fz = dz * kGrab - vel.z * kdGrab;
-    
-    if (!Number.isNaN(fx) && !Number.isNaN(fy) && !Number.isNaN(fz)) {
-      body.applyImpulse({ x: fx * mass * dt, y: fy * mass * dt, z: fz * mass * dt }, true);
+    while (acc >= FIXED_DT) {
+      world.step();
+      acc -= FIXED_DT;
     }
 
-    if (gs.grabbed.kind === 'human') {
-      const name = gs.grabbed.segmentName;
-      if (name === 'torso' || name === 'pelvis') continue;
-
-      if (dist > 0.3) gs.strain += dt * 1.8;
-      else gs.strain += dt * 0.5;
-
-      const breakTime = name === 'head' ? 0.5 : 1.4;
-      if (gs.strain > breakTime) {
-        const human = gs.grabbed.human;
-        const jointName = human.parentJointOf[name];
-        if (jointName && !human.joints[jointName].broken) {
-          const pushDist = Math.max(dist, 0.01);
-          const pushDir = { x: dx/pushDist * 4 * mass, y: dy/pushDist * 4 * mass + 1 * mass, z: dz/pushDist * 4 * mass };
-          body.applyImpulse(pushDir, true);
-          breakJoint(human, jointName);
+    // --- Игрок ---
+    if (pointerLocked) {
+      const speed = 6;
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(yawObj.quaternion);
+      const right = new THREE.Vector3(1, 0, 0).applyQuaternion(yawObj.quaternion);
+      fwd.y = 0; fwd.normalize();
+      right.y = 0; right.normalize();
+      const move = new THREE.Vector3();
+      if (keys['KeyW']) move.add(fwd);
+      if (keys['KeyS']) move.sub(fwd);
+      if (keys['KeyD']) move.add(right);
+      if (keys['KeyA']) move.sub(right);
+      if (move.lengthSq() > 0) {
+        move.normalize().multiplyScalar(speed * dt);
+        yawObj.position.add(move);
+        const r = Math.hypot(yawObj.position.x, yawObj.position.z);
+        if (r > ARENA - 1.5) {
+          const k = (ARENA - 1.5) / r;
+          yawObj.position.x *= k;
+          yawObj.position.z *= k;
         }
-        gs.grabbed = null;
-        gs.strain = 0;
-        setClawClosed(side === 'L' ? clawL : clawR, false);
-        if (!grabState.L.grabbed && !grabState.R.grabbed)
-          document.getElementById('crosshair').classList.remove('grab');
       }
     }
-  }
 
-  // --- AI + синхронизация ---
-  for (const h of humans) {
-    updateHumanAI(h, dt, now);
-    for (const name in h.segments) {
-      const seg = h.segments[name];
-      const t = seg.body.translation();
-      const r = seg.body.rotation();
+    // --- Q = бросить ---
+    if (keys['KeyQ']) {
+      if (grabState.L.grabbed) releaseGrab('L', true);
+      else if (grabState.R.grabbed) releaseGrab('R', true);
+      keys['KeyQ'] = false;
+    }
+
+    // --- Захват ---
+    camera.getWorldPosition(camWorldPos);
+    camera.getWorldQuaternion(tmpQ);
+    camDir.set(0, 0, -1).applyQuaternion(tmpQ);
+
+    for (const side of ['L', 'R']) {
+      const gs = grabState[side];
+      if (!gs.grabbed) continue;
+
+      const body = gs.grabbed.body;
+      const bt = body.translation();
+      if (Number.isNaN(bt.x)) { gs.grabbed = null; continue; }
+
+      const vel = body.linvel();
+      const mass = Math.max(body.mass() || 1, 0.1);
+
+      targetPos.copy(camWorldPos).addScaledVector(camDir, 1.6);
+      const dx = targetPos.x - bt.x;
+      const dy = targetPos.y - bt.y;
+      const dz = targetPos.z - bt.z;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+      const kGrab = 100;
+      const kdGrab = 20;
+      const fx = dx * kGrab - vel.x * kdGrab;
+      const fy = dy * kGrab - vel.y * kdGrab;
+      const fz = dz * kGrab - vel.z * kdGrab;
+      
+      if (!Number.isNaN(fx) && !Number.isNaN(fy) && !Number.isNaN(fz)) {
+        body.applyImpulse({ x: fx * mass * dt, y: fy * mass * dt, z: fz * mass * dt }, true);
+      }
+
+      if (gs.grabbed.kind === 'human') {
+        const name = gs.grabbed.segmentName;
+        if (name === 'torso' || name === 'pelvis') continue;
+
+        if (dist > 0.3) gs.strain += dt * 1.8;
+        else gs.strain += dt * 0.5;
+
+        const breakTime = name === 'head' ? 0.5 : 1.4;
+        if (gs.strain > breakTime) {
+          const human = gs.grabbed.human;
+          const jointName = human.parentJointOf[name];
+          if (jointName && !human.joints[jointName].broken) {
+            const pushDist = Math.max(dist, 0.01);
+            const pushDir = { x: dx/pushDist * 4 * mass, y: dy/pushDist * 4 * mass + 1 * mass, z: dz/pushDist * 4 * mass };
+            body.applyImpulse(pushDir, true);
+            breakJoint(human, jointName);
+          }
+          gs.grabbed = null;
+          gs.strain = 0;
+          setClawClosed(side === 'L' ? clawL : clawR, false);
+          if (!grabState.L.grabbed && !grabState.R.grabbed)
+            document.getElementById('crosshair').classList.remove('grab');
+        }
+      }
+    }
+
+    // --- AI + синхронизация ---
+    for (const h of humans) {
+      updateHumanAI(h, dt, now);
+      for (const name in h.segments) {
+        const seg = h.segments[name];
+        const t = seg.body.translation();
+        const r = seg.body.rotation();
+        if (!Number.isNaN(t.x)) {
+          seg.mesh.position.set(t.x, t.y, t.z);
+          seg.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+        }
+      }
+    }
+
+    for (const c of crates) {
+      const t = c.body.translation();
+      const r = c.body.rotation();
       if (!Number.isNaN(t.x)) {
-        seg.mesh.position.set(t.x, t.y, t.z);
-        seg.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+        c.mesh.position.set(t.x, t.y, t.z);
+        c.mesh.quaternion.set(r.x, r.y, r.z, r.w);
       }
     }
-  }
 
-  for (const c of crates) {
-    const t = c.body.translation();
-    const r = c.body.rotation();
-    if (!Number.isNaN(t.x)) {
-      c.mesh.position.set(t.x, t.y, t.z);
-      c.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    // --- Волны ---
+    spawnTimer += dt;
+    if (spawnQueue.length > 0 && spawnTimer > 0.6) {
+      spawnTimer = 0;
+      try {
+        createHuman(spawnQueue.shift());
+      } catch (err) {
+        console.error('Spawn Error:', err);
+        window.onerror(err.message);
+      }
     }
-  }
 
-  // --- Волны ---
-  spawnTimer += dt;
-  if (spawnQueue.length > 0 && spawnTimer > 0.6) {
-    spawnTimer = 0;
-    createHuman(spawnQueue.shift());
-  }
-
-  if (nextWaveCooldown > 0) {
-    nextWaveCooldown -= dt;
-    if (nextWaveCooldown <= 0) startWave();
-  } else if (spawnQueue.length === 0 && humans.length > 0) {
-    const allDead = humans.every(h => !h.alive);
-    if (allDead) {
-      showMsg('ВОЛНА ЗАЧИЩЕНА', '#0f0');
-      nextWaveCooldown = 3.0;
+    if (nextWaveCooldown > 0) {
+      nextWaveCooldown -= dt;
+      if (nextWaveCooldown <= 0) startWave();
+    } else if (spawnQueue.length === 0 && humans.length > 0) {
+      const allDead = humans.every(h => !h.alive);
+      if (allDead) {
+        showMsg('ВОЛНА ЗАЧИЩЕНА', '#0f0');
+        nextWaveCooldown = 3.0;
+      }
     }
-  }
 
-  updateBlood(dt);
+    updateBlood(dt);
 
-  if (robotHP <= 0) {
-    robotHP = 100;
-    updateHUD();
-    showMsg('СИСТЕМА ПЕРЕЗАГРУЖЕНА', '#0f0');
+    if (robotHP <= 0) {
+      robotHP = 100;
+      updateHUD();
+      showMsg('СИСТЕМА ПЕРЕЗАГРУЖЕНА', '#0f0');
+    }
+
+  } catch (e) {
+    console.error(e);
+    window.onerror(e.message);
   }
 
   renderer.render(scene, camera);
